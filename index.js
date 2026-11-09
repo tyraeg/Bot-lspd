@@ -4,9 +4,7 @@ const fs = require('fs');
 const express = require('express');
 
 // ==========================================
-// ĐỌC CẤU HÌNH TỪ BIẾN MÔI TRƯỜNG (ENVIRONMENT VARIABLES)
-// Khi chạy trên Render, bạn sẽ điền các giá trị này ở tab Environment.
-// Nếu chạy dưới máy (Termux), bạn có thể điền trực tiếp vào sau dấu ||.
+// ĐỌC CẤU HÌNH TỪ BIẾN MÔI TRƯỜNG
 // ==========================================
 const TOKEN = process.env.TOKEN || 'DÁN_TOKEN_NEU_CHAY_LOCAL';
 const CLIENT_ID = process.env.CLIENT_ID || 'DÁN_CLIENT_ID_NEU_CHAY_LOCAL';
@@ -154,16 +152,31 @@ const client = new Client({
     ]
 });
 
+// Hàm đăng ký lệnh vào từng Server (Để hiện ngay lập tức)
+async function registerCommands(guildId) {
+    try {
+        const rest = new REST({ version: '10' }).setToken(TOKEN);
+        if (guildId) {
+            // Đăng ký riêng cho 1 server (Hiện ngay)
+            await rest.put(Routes.applicationGuildCommands(CLIENT_ID, guildId), { body: commands });
+            console.log(`✅ Đã đăng ký lệnh thành công cho Server ID: ${guildId}`);
+        } else {
+            // Đăng ký toàn cầu (Dự phòng)
+            await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+            console.log('✅ Đã đăng ký lệnh Toàn cầu (Có thể mất vài phút để hiện)');
+        }
+    } catch (error) {
+        console.error('❌ Lỗi đăng ký lệnh:', error);
+    }
+}
+
 client.once(Events.ClientReady, async () => {
     console.log(`Bot đã sẵn sàng: ${client.user.tag}`);
     
-    try {
-        const rest = new REST({ version: '10' }).setToken(TOKEN);
-        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log('Đã đăng ký thành công các lệnh Slash Command!');
-    } catch (error) {
-        console.error('Lỗi đăng ký lệnh:', error);
-    }
+    // Tự động đăng ký lệnh cho tất cả các server mà bot đang ở
+    client.guilds.cache.forEach(guild => {
+        registerCommands(guild.id);
+    });
 });
 
 // --- BẢNG ĐIỂM DANH ---
@@ -405,6 +418,17 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
             const warnEmbed = new EmbedBuilder().setTitle('🚨 DISCONNECT KHI ĐANG TRỰC').setDescription(`**Thành viên:** <@${userId}>\n**Ca này:** ${formatTime(sessionTime)}`).setColor(0xFF0000);
             await warningChannel.send({ embeds: [warnEmbed] });
         }
+    }
+});
+
+// --- LỆNH TEXT DỰ PHÒNG (!sync) ---
+client.on(Events.MessageCreate, async message => {
+    if (message.author.bot) return;
+
+    // Lệnh ép đồng bộ lại lệnh Slash cho Server hiện tại
+    if (message.content === '!sync' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        await registerCommands(message.guild.id);
+        message.reply("✅ Đã ép Bot đồng bộ lại các lệnh `/`. Hãy tải lại Discord (Ctrl+R) và thử lại sau 5 giây!");
     }
 });
 
