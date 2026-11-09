@@ -1,18 +1,15 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, PermissionFlagsBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, PermissionFlagsBits } = require('discord.js');
 const initSqlJs = require('sql.js');
 const fs = require('fs');
 const express = require('express');
 
 // ==========================================
-// ĐỌC CẤU HÌNH TỪ BIẾN MÔI TRƯỜNG
+// CẤU HÌNH CỦA BẠN
 // ==========================================
 const TOKEN = process.env.TOKEN || 'DÁN_TOKEN_NEU_CHAY_LOCAL';
-const CLIENT_ID = process.env.CLIENT_ID || 'DÁN_CLIENT_ID_NEU_CHAY_LOCAL';
-
 const LOG_DUTY_ID = process.env.LOG_DUTY_ID || 'DÁN_ID_KÊNH_LOG_ON_OFF';
 const LOG_WARNING_ID = process.env.LOG_WARNING_ID || 'DÁN_ID_KÊNH_CANH_BAO';
 const LOG_LEAVE_ID = process.env.LOG_LEAVE_ID || 'DÁN_ID_KÊNH_XIN_NGHI';
-
 const DUTY_BOARD_CHANNEL_ID = process.env.DUTY_BOARD_CHANNEL_ID || ''; 
 // ==========================================
 
@@ -117,30 +114,6 @@ const timeToMinutes = (timeStr) => {
     return h * 60 + m;
 };
 
-// --- ĐỊNH NGHĨA CÁC LỆNH SLASH COMMAND ---
-const commands = [
-    new SlashCommandBuilder()
-        .setName('settime')
-        .setDescription('Cài đặt lịch trực cho nhân viên')
-        .addUserOption(opt => opt.setName('user').setDescription('Chọn nhân viên').setRequired(true))
-        .addStringOption(opt => opt.setName('start').setDescription('Giờ bắt đầu (VD: 14:00)').setRequired(true))
-        .addStringOption(opt => opt.setName('end').setDescription('Giờ kết thúc (VD: 15:30)').setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-
-    new SlashCommandBuilder()
-        .setName('setup')
-        .setDescription('Tạo bảng chấm công')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-
-    new SlashCommandBuilder()
-        .setName('bxh')
-        .setDescription('Xem bảng xếp hạng chăm chỉ'),
-
-    new SlashCommandBuilder()
-        .setName('stats')
-        .setDescription('Xem thống kê chung của server')
-].map(command => command.toJSON());
-
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -152,33 +125,8 @@ const client = new Client({
     ]
 });
 
-// HÀM ĐĂNG KÝ LỆNH (Có xóa cache cũ trước khi đăng ký)
-async function registerCommands() {
-    try {
-        const rest = new REST({ version: '10' }).setToken(TOKEN);
-        
-        // 1. Xóa các lệnh toàn cầu cũ (để tránh bị trùng lặp)
-        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
-        
-        // 2. Đăng ký lệnh mới cho từng Server mà Bot đang tham gia
-        client.guilds.cache.forEach(async (guild) => {
-            await rest.put(Routes.applicationGuildCommands(CLIENT_ID, guild.id), { body: commands });
-            console.log(`✅ Đã đồng bộ lệnh thành công cho Server: ${guild.name}`);
-        });
-        
-        console.log('🎉 HOÀN TẤT ĐĂNG KÝ LỆNH! Hãy tải lại Discord (Ctrl+R).');
-    } catch (error) {
-        console.error('❌ Lỗi đăng ký lệnh:', error);
-    }
-}
-
-client.once(Events.ClientReady, async () => {
+client.once(Events.ClientReady, () => {
     console.log(`Bot đã sẵn sàng: ${client.user.tag}`);
-    
-    // Đợi 2 giây để bot load xong server rồi mới đăng ký lệnh
-    setTimeout(() => {
-        registerCommands();
-    }, 2000);
 });
 
 // --- BẢNG ĐIỂM DANH ---
@@ -231,175 +179,178 @@ async function updateDutyBoard(channel) {
     } catch (error) {}
 }
 
-// --- XỬ LÝ TƯƠNG TÁC ---
+// --- XỬ LÝ NÚT BẤM ---
 client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isButton()) return;
+
     const logDutyChannel = client.channels.cache.get(LOG_DUTY_ID);
     const logLeaveChannel = client.channels.cache.get(LOG_LEAVE_ID);
 
-    if (interaction.isChatInputCommand()) {
-        const { commandName, options, guild } = interaction;
-
-        if (commandName === 'setup') {
-            await interaction.deferReply({ ephemeral: true });
-            await interaction.channel.send({ content: "Đang khởi tạo bảng..." }).then(async msg => {
-                await msg.delete();
-                await updateDutyBoard(interaction.channel);
-            });
-            return interaction.editReply({ content: "✅ Đã tạo bảng chấm công!" });
+    if (interaction.customId === 'leave_btn') {
+        const user = getOrCreateUser(interaction.user.id);
+        if (user.is_on_leave === 1) {
+            return interaction.reply({ content: "❌ Bạn đã xin nghỉ phép hôm nay rồi. Qua 12h đêm hệ thống sẽ tự động mở khóa!", ephemeral: true });
         }
 
-        if (commandName === 'settime') {
-            const targetUser = options.getUser('user');
-            const startTime = options.getString('start');
-            const endTime = options.getString('end');
-
-            if (!startTime.includes(':') || !endTime.includes(':')) {
-                return interaction.reply({ content: "Giờ phải có định dạng HH:MM (Ví dụ: 14:00).", ephemeral: true });
-            }
-
-            getOrCreateUser(targetUser.id);
-            db.run('UPDATE users SET schedule_start = ?, schedule_end = ?, has_warned_schedule = 0 WHERE user_id = ?', [startTime, endTime, targetUser.id]);
-            saveDatabase();
-            return interaction.reply({ content: `✅ Đã set lịch cho <@${targetUser.id}>: Từ **${startTime}** đến **${endTime}**.` });
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`approve_leave_${interaction.user.id}`).setLabel('Chấp nhận').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`deny_leave_${interaction.user.id}`).setLabel('Từ chối').setStyle(ButtonStyle.Danger)
+        );
+        if(logLeaveChannel) {
+            await logLeaveChannel.send({ content: `📩 **ĐƠN XIN NGHỈ** từ <@${interaction.user.id}>. Admin duyệt:`, components: [row] });
         }
-
-        if (commandName === 'bxh') {
-            await interaction.deferReply();
-            const stmt = db.prepare('SELECT * FROM users ORDER BY total_time DESC LIMIT 10');
-            const users = [];
-            while (stmt.step()) users.push(stmt.getAsObject());
-            stmt.free();
-
-            if (users.length === 0) return interaction.editReply("Chưa có dữ liệu trực.");
-
-            let description = "";
-            let rank = 1;
-            for (const u of users) {
-                const target = await guild.members.fetch(u.user_id).catch(() => null);
-                const name = target ? target.displayName : "Unknown";
-                const medal = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `#${rank}`;
-                
-                let time = u.total_time;
-                if (u.is_on_duty) time += (Date.now() - u.start_time);
-
-                description += `${medal} **${name}**\n`;
-                description += `└ ⏱️ Tổng: **${formatTime(time)}** | 📅 Ngày: **${u.total_days}**\n\n`;
-                rank++;
-            }
-
-            const embed = new EmbedBuilder().setTitle("🏆 BẢNG XẾP HẠNG CHĂM CHỈ").setDescription(description).setColor(0xFFD700);
-            return interaction.editReply({ embeds: [embed] });
-        }
-
-        if (commandName === 'stats') {
-            await interaction.deferReply();
-            const stmt = db.prepare('SELECT * FROM users');
-            const users = [];
-            while (stmt.step()) users.push(stmt.getAsObject());
-            stmt.free();
-
-            let totalMembers = users.length;
-            let totalDays = 0;
-            let totalTime = 0;
-            let onlineCount = 0;
-
-            for (const u of users) {
-                totalDays += u.total_days;
-                if (u.is_on_duty) {
-                    onlineCount++;
-                    totalTime += (u.total_time + (Date.now() - u.start_time));
-                } else {
-                    totalTime += u.total_time;
-                }
-            }
-
-            const embed = new EmbedBuilder().setTitle("📊 THỐNG KÊ CHUNG SERVER").addFields(
-                { name: '👥 Tổng nhân sự', value: `\`${totalMembers}\` người`, inline: true },
-                { name: '🟢 Đang Online', value: `\`${onlineCount}\` người`, inline: true },
-                { name: '📅 Tổng ngày trực', value: `\`${totalDays}\` ngày`, inline: true },
-                { name: '⏱️ Tổng thời gian', value: `\`${formatTime(totalTime)}\``, inline: true }
-            ).setColor(0x00BFFF);
-            return interaction.editReply({ embeds: [embed] });
-        }
+        return interaction.reply({ content: "Đã gửi đơn xin nghỉ đến Admin.", ephemeral: true });
     }
 
-    if (interaction.isButton()) {
-        if (interaction.customId === 'leave_btn') {
-            const user = getOrCreateUser(interaction.user.id);
-            if (user.is_on_leave === 1) {
-                return interaction.reply({ content: "❌ Bạn đã xin nghỉ phép hôm nay rồi. Qua 12h đêm hệ thống sẽ tự động mở khóa!", ephemeral: true });
-            }
+    if (interaction.customId.startsWith('approve_leave_') && interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        const targetId = interaction.customId.split('_')[2];
+        const today = new Date().toISOString().split('T')[0]; 
+        db.run('UPDATE users SET is_on_leave = 1, leave_date = ? WHERE user_id = ?', [today, targetId]);
+        saveDatabase();
+        
+        try {
+            const targetUser = await client.users.fetch(targetId);
+            await targetUser.send(`✅ **THÔNG BÁO:** Đơn xin nghỉ phép của bạn đã được Admin **${interaction.user.username}** phê duyệt. Hệ thống sẽ tự động mở khóa On Duty vào 00:00 ngày mai.`);
+        } catch (error) {}
+        return interaction.update({ content: `✅ **${interaction.user.username}** đã duyệt đơn xin nghỉ cho <@${targetId}>.`, components: [] });
+    }
 
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`approve_leave_${interaction.user.id}`).setLabel('Chấp nhận').setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId(`deny_leave_${interaction.user.id}`).setLabel('Từ chối').setStyle(ButtonStyle.Danger)
-            );
-            if(logLeaveChannel) {
-                await logLeaveChannel.send({ content: `📩 **ĐƠN XIN NGHỈ** từ <@${interaction.user.id}>. Admin duyệt:`, components: [row] });
-            }
-            return interaction.reply({ content: "Đã gửi đơn xin nghỉ đến Admin.", ephemeral: true });
+    if (interaction.customId.startsWith('deny_leave_') && interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        const targetId = interaction.customId.split('_')[2];
+        try {
+            const targetUser = await client.users.fetch(targetId);
+            await targetUser.send(`❌ **THÔNG BÁO:** Đơn xin nghỉ phép của bạn đã bị Admin **${interaction.user.username}** từ chối.`);
+        } catch (error) {}
+        return interaction.update({ content: `❌ **${interaction.user.username}** đã từ chối đơn xin nghỉ của <@${targetId}>.`, components: [] });
+    }
+
+    if (interaction.customId !== 'onduty_btn' && interaction.customId !== 'offduty_btn') return;
+
+    const user = getOrCreateUser(interaction.user.id);
+    const voiceChannel = interaction.member.voice.channel;
+
+    if (interaction.customId === 'onduty_btn') {
+        if (user.is_on_leave === 1) {
+            return interaction.reply({ content: "❌ Bạn đang trong thời gian xin nghỉ phép hôm nay. Qua 12h đêm (ngày mai) bạn mới có thể On Duty lại!", ephemeral: true });
         }
+        if (user.is_on_duty) return interaction.reply({ content: "Bạn đã trong ca trực rồi!", ephemeral: true });
+        if (!voiceChannel) return interaction.reply({ content: "Bạn phải vào Voice Channel trước khi On Duty!", ephemeral: true });
 
-        if (interaction.customId.startsWith('approve_leave_') && interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            const targetId = interaction.customId.split('_')[2];
-            const today = new Date().toISOString().split('T')[0]; 
-            db.run('UPDATE users SET is_on_leave = 1, leave_date = ? WHERE user_id = ?', [today, targetId]);
-            saveDatabase();
+        checkAndAddDay(user.user_id);
+        db.run('UPDATE users SET is_on_duty = 1, start_time = ? WHERE user_id = ?', [Date.now(), user.user_id]);
+        saveDatabase();
+        
+        await interaction.reply({ content: `Bắt đầu ca trực lúc ${new Date().toLocaleTimeString('vi-VN')}.`, ephemeral: true });
+        if (logDutyChannel) {
+            const logEmbed = new EmbedBuilder().setTitle('🟢 Bắt đầu ca trực').setDescription(`**Thành viên:** <@${interaction.user.id}>\n**Giờ:** ${new Date().toLocaleTimeString('vi-VN')}`).setColor(0x00FF00);
+            await logDutyChannel.send({ embeds: [logEmbed] });
+        }
+        updateDutyBoard(interaction.channel);
+
+    } else if (interaction.customId === 'offduty_btn') {
+        if (!user.is_on_duty) return interaction.reply({ content: "Bạn chưa On Duty!", ephemeral: true });
+
+        const sessionTime = Date.now() - user.start_time;
+        const newTotal = user.total_time + sessionTime;
+        db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = ? WHERE user_id = ?', [newTotal, user.user_id]);
+        saveDatabase();
+        
+        await interaction.reply({ content: `Đã kết thúc ca. Ca này: **${formatTime(sessionTime)}**`, ephemeral: true });
+        if (logDutyChannel) {
+            const logEmbed = new EmbedBuilder().setTitle('🔴 Kết thúc ca trực').setDescription(`**Thành viên:** <@${interaction.user.id}>\n**Ca này:** ${formatTime(sessionTime)}`).setColor(0xFF0000);
+            await logDutyChannel.send({ embeds: [logEmbed] });
+        }
+        updateDutyBoard(interaction.channel);
+    }
+});
+
+// --- LỆNH TEXT (!) ---
+client.on(Events.MessageCreate, async message => {
+    if (message.author.bot) return;
+
+    // 1. Lệnh tạo bảng: !setup
+    if (message.content === '!setup' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        await message.delete().catch(() => {});
+        updateDutyBoard(message.channel);
+    }
+
+    // 2. Lệnh set giờ: !settime @User 14:00 15:30
+    if (message.content.startsWith('!settime') && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        const args = message.content.split(' ');
+        if (args.length !== 4) return message.reply("Cú pháp sai! Dùng: `!settime @User 14:00 15:30`");
+        
+        const targetUser = message.mentions.users.first();
+        if (!targetUser) return message.reply("Vui lòng tag tên user (VD: @Nam).");
+        
+        const startTime = args[2];
+        const endTime = args[3];
+
+        if (!startTime.includes(':') || !endTime.includes(':')) return message.reply("Giờ phải có định dạng HH:MM (Ví dụ: 14:00).");
+
+        getOrCreateUser(targetUser.id);
+        db.run('UPDATE users SET schedule_start = ?, schedule_end = ?, has_warned_schedule = 0 WHERE user_id = ?', [startTime, endTime, targetUser.id]);
+        saveDatabase();
+
+        message.reply(`✅ Đã set lịch cho <@${targetUser.id}>: Từ **${startTime}** đến **${endTime}**.`);
+    }
+
+    // 3. Lệnh xem BXH: !bxh
+    if (message.content === '!bxh') {
+        const stmt = db.prepare('SELECT * FROM users ORDER BY total_time DESC LIMIT 10');
+        const users = [];
+        while (stmt.step()) users.push(stmt.getAsObject());
+        stmt.free();
+
+        if (users.length === 0) return message.reply("Chưa có dữ liệu trực.");
+
+        let description = "";
+        let rank = 1;
+        for (const u of users) {
+            const member = await message.guild.members.fetch(u.user_id).catch(() => null);
+            const name = member ? member.displayName : "Unknown";
+            const medal = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `#${rank}`;
             
-            try {
-                const targetUser = await client.users.fetch(targetId);
-                await targetUser.send(`✅ **THÔNG BÁO:** Đơn xin nghỉ phép của bạn đã được Admin **${interaction.user.username}** phê duyệt. Hệ thống sẽ tự động mở khóa On Duty vào 00:00 ngày mai.`);
-            } catch (error) {}
-            return interaction.update({ content: `✅ **${interaction.user.username}** đã duyệt đơn xin nghỉ cho <@${targetId}>.`, components: [] });
+            let time = u.total_time;
+            if (u.is_on_duty) time += (Date.now() - u.start_time);
+
+            description += `${medal} **${name}**\n`;
+            description += `└ ⏱️ Tổng: **${formatTime(time)}** | 📅 Ngày: **${u.total_days}**\n\n`;
+            rank++;
         }
 
-        if (interaction.customId.startsWith('deny_leave_') && interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            const targetId = interaction.customId.split('_')[2];
-            try {
-                const targetUser = await client.users.fetch(targetId);
-                await targetUser.send(`❌ **THÔNG BÁO:** Đơn xin nghỉ phép của bạn đã bị Admin **${interaction.user.username}** từ chối.`);
-            } catch (error) {}
-            return interaction.update({ content: `❌ **${interaction.user.username}** đã từ chối đơn xin nghỉ của <@${targetId}>.`, components: [] });
+        const embed = new EmbedBuilder().setTitle("🏆 BẢNG XẾP HẠNG CHĂM CHỈ").setDescription(description).setColor(0xFFD700);
+        message.reply({ embeds: [embed] });
+    }
+
+    // 4. Lệnh xem thống kê: !stats
+    if (message.content === '!stats') {
+        const stmt = db.prepare('SELECT * FROM users');
+        const users = [];
+        while (stmt.step()) users.push(stmt.getAsObject());
+        stmt.free();
+
+        let totalMembers = users.length;
+        let totalDays = 0;
+        let totalTime = 0;
+        let onlineCount = 0;
+
+        for (const u of users) {
+            totalDays += u.total_days;
+            if (u.is_on_duty) {
+                onlineCount++;
+                totalTime += (u.total_time + (Date.now() - u.start_time));
+            } else {
+                totalTime += u.total_time;
+            }
         }
 
-        if (interaction.customId !== 'onduty_btn' && interaction.customId !== 'offduty_btn') return;
-
-        const user = getOrCreateUser(interaction.user.id);
-        const voiceChannel = interaction.member.voice.channel;
-
-        if (interaction.customId === 'onduty_btn') {
-            if (user.is_on_leave === 1) {
-                return interaction.reply({ content: "❌ Bạn đang trong thời gian xin nghỉ phép hôm nay. Qua 12h đêm (ngày mai) bạn mới có thể On Duty lại!", ephemeral: true });
-            }
-            if (user.is_on_duty) return interaction.reply({ content: "Bạn đã trong ca trực rồi!", ephemeral: true });
-            if (!voiceChannel) return interaction.reply({ content: "Bạn phải vào Voice Channel trước khi On Duty!", ephemeral: true });
-
-            checkAndAddDay(user.user_id);
-            db.run('UPDATE users SET is_on_duty = 1, start_time = ? WHERE user_id = ?', [Date.now(), user.user_id]);
-            saveDatabase();
-            
-            await interaction.reply({ content: `Bắt đầu ca trực lúc ${new Date().toLocaleTimeString('vi-VN')}.`, ephemeral: true });
-            if (logDutyChannel) {
-                const logEmbed = new EmbedBuilder().setTitle('🟢 Bắt đầu ca trực').setDescription(`**Thành viên:** <@${interaction.user.id}>\n**Giờ:** ${new Date().toLocaleTimeString('vi-VN')}`).setColor(0x00FF00);
-                await logDutyChannel.send({ embeds: [logEmbed] });
-            }
-            updateDutyBoard(interaction.channel);
-
-        } else if (interaction.customId === 'offduty_btn') {
-            if (!user.is_on_duty) return interaction.reply({ content: "Bạn chưa On Duty!", ephemeral: true });
-
-            const sessionTime = Date.now() - user.start_time;
-            const newTotal = user.total_time + sessionTime;
-            db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = ? WHERE user_id = ?', [newTotal, user.user_id]);
-            saveDatabase();
-            
-            await interaction.reply({ content: `Đã kết thúc ca. Ca này: **${formatTime(sessionTime)}**`, ephemeral: true });
-            if (logDutyChannel) {
-                const logEmbed = new EmbedBuilder().setTitle('🔴 Kết thúc ca trực').setDescription(`**Thành viên:** <@${interaction.user.id}>\n**Ca này:** ${formatTime(sessionTime)}`).setColor(0xFF0000);
-                await logDutyChannel.send({ embeds: [logEmbed] });
-            }
-            updateDutyBoard(interaction.channel);
-        }
+        const embed = new EmbedBuilder().setTitle("📊 THỐNG KÊ CHUNG SERVER").addFields(
+            { name: '👥 Tổng nhân sự', value: `\`${totalMembers}\` người`, inline: true },
+            { name: '🟢 Đang Online', value: `\`${onlineCount}\` người`, inline: true },
+            { name: '📅 Tổng ngày trực', value: `\`${totalDays}\` ngày`, inline: true },
+            { name: '⏱️ Tổng thời gian', value: `\`${formatTime(totalTime)}\``, inline: true }
+        ).setColor(0x00BFFF);
+        message.reply({ embeds: [embed] });
     }
 });
 
@@ -420,16 +371,6 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
             const warnEmbed = new EmbedBuilder().setTitle('🚨 DISCONNECT KHI ĐANG TRỰC').setDescription(`**Thành viên:** <@${userId}>\n**Ca này:** ${formatTime(sessionTime)}`).setColor(0xFF0000);
             await warningChannel.send({ embeds: [warnEmbed] });
         }
-    }
-});
-
-// --- LỆNH TEXT DỰ PHÒNG (!sync) ---
-client.on(Events.MessageCreate, async message => {
-    if (message.author.bot) return;
-
-    if (message.content === '!sync' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-        await message.reply("Đang ép Discord đồng bộ lại lệnh `/`...");
-        await registerCommands();
     }
 });
 
@@ -482,7 +423,7 @@ setInterval(() => {
 }, 60 * 1000); 
 
 // ==========================================
-// KHỞI TẠO WEB SERVER
+// KHỞI TẠO WEB SERVER (DÀNH CHO RENDER)
 // ==========================================
 const app = express();
 const PORT = process.env.PORT || 10000;
