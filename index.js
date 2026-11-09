@@ -117,7 +117,7 @@ const timeToMinutes = (timeStr) => {
     return h * 60 + m;
 };
 
-// --- TẠO CÁC LỆNH SLASH COMMAND ---
+// --- ĐỊNH NGHĨA CÁC LỆNH SLASH COMMAND ---
 const commands = [
     new SlashCommandBuilder()
         .setName('settime')
@@ -152,19 +152,21 @@ const client = new Client({
     ]
 });
 
-// Hàm đăng ký lệnh vào từng Server (Để hiện ngay lập tức)
-async function registerCommands(guildId) {
+// HÀM ĐĂNG KÝ LỆNH (Có xóa cache cũ trước khi đăng ký)
+async function registerCommands() {
     try {
         const rest = new REST({ version: '10' }).setToken(TOKEN);
-        if (guildId) {
-            // Đăng ký riêng cho 1 server (Hiện ngay)
-            await rest.put(Routes.applicationGuildCommands(CLIENT_ID, guildId), { body: commands });
-            console.log(`✅ Đã đăng ký lệnh thành công cho Server ID: ${guildId}`);
-        } else {
-            // Đăng ký toàn cầu (Dự phòng)
-            await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-            console.log('✅ Đã đăng ký lệnh Toàn cầu (Có thể mất vài phút để hiện)');
-        }
+        
+        // 1. Xóa các lệnh toàn cầu cũ (để tránh bị trùng lặp)
+        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
+        
+        // 2. Đăng ký lệnh mới cho từng Server mà Bot đang tham gia
+        client.guilds.cache.forEach(async (guild) => {
+            await rest.put(Routes.applicationGuildCommands(CLIENT_ID, guild.id), { body: commands });
+            console.log(`✅ Đã đồng bộ lệnh thành công cho Server: ${guild.name}`);
+        });
+        
+        console.log('🎉 HOÀN TẤT ĐĂNG KÝ LỆNH! Hãy tải lại Discord (Ctrl+R).');
     } catch (error) {
         console.error('❌ Lỗi đăng ký lệnh:', error);
     }
@@ -173,10 +175,10 @@ async function registerCommands(guildId) {
 client.once(Events.ClientReady, async () => {
     console.log(`Bot đã sẵn sàng: ${client.user.tag}`);
     
-    // Tự động đăng ký lệnh cho tất cả các server mà bot đang ở
-    client.guilds.cache.forEach(guild => {
-        registerCommands(guild.id);
-    });
+    // Đợi 2 giây để bot load xong server rồi mới đăng ký lệnh
+    setTimeout(() => {
+        registerCommands();
+    }, 2000);
 });
 
 // --- BẢNG ĐIỂM DANH ---
@@ -425,10 +427,9 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot) return;
 
-    // Lệnh ép đồng bộ lại lệnh Slash cho Server hiện tại
     if (message.content === '!sync' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-        await registerCommands(message.guild.id);
-        message.reply("✅ Đã ép Bot đồng bộ lại các lệnh `/`. Hãy tải lại Discord (Ctrl+R) và thử lại sau 5 giây!");
+        await message.reply("Đang ép Discord đồng bộ lại lệnh `/`...");
+        await registerCommands();
     }
 });
 
@@ -481,7 +482,7 @@ setInterval(() => {
 }, 60 * 1000); 
 
 // ==========================================
-// KHỞI TẠO WEB SERVER (DÀNH CHO RENDER)
+// KHỞI TẠO WEB SERVER
 // ==========================================
 const app = express();
 const PORT = process.env.PORT || 10000;
