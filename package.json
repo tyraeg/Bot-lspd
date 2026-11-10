@@ -1,7 +1,6 @@
 {
   "name": "duty-bot",
   "version": "1.0.0",
-  "description": "Bot cham cong",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
