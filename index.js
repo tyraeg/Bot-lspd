@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, PermissionFlagsBits, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, PermissionFlagsBits } = require('discord.js');
 const initSqlJs = require('sql.js');
 const fs = require('fs');
 const express = require('express');
@@ -7,21 +7,15 @@ const TOKEN = process.env.TOKEN;
 
 // --- QUẢN LÝ CẤU HÌNH KÊNH ---
 let config = {
-    dutyChannelId: null,
-    warningChannelId: null,
-    leaveChannelId: null,
-    boardChannelId: null
+    dutyChannelId: null, warningChannelId: null, leaveChannelId: null, boardChannelId: null
 };
 
-// Đọc cấu hình từ file (nếu có)
 function loadConfig() {
     if (fs.existsSync('config.json')) {
         try { config = JSON.parse(fs.readFileSync('config.json', 'utf8')); } catch (e) {}
     }
 }
-function saveConfig() {
-    fs.writeFileSync('config.json', JSON.stringify(config, null, 2));
-}
+function saveConfig() { fs.writeFileSync('config.json', JSON.stringify(config, null, 2)); }
 
 let db;
 let isDbReady = false;
@@ -112,7 +106,7 @@ const client = new Client({
 
 client.once(Events.ClientReady, () => {
     console.log(`🚀 BOT ĐÃ ONLINE: ${client.user.tag}`);
-    loadConfig(); // Tải cấu hình kênh khi khởi động
+    loadConfig();
     initDatabase();
 });
 
@@ -145,7 +139,6 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     if (!isDbReady) return interaction.reply({ content: "Hệ thống đang khởi động, đợi xíu!", ephemeral: true });
 
-    // Lấy kênh từ cấu hình (nếu không có thì dùng kênh chấm công)
     const logDutyChannel = config.dutyChannelId ? client.channels.cache.get(config.dutyChannelId) : client.channels.cache.get(config.boardChannelId);
     const logLeaveChannel = config.leaveChannelId ? client.channels.cache.get(config.leaveChannelId) : client.channels.cache.get(config.boardChannelId);
 
@@ -186,16 +179,34 @@ client.on(Events.InteractionCreate, async interaction => {
 
         checkAndAddDay(user.user_id);
         db.run('UPDATE users SET is_on_duty = 1, start_time = ? WHERE user_id = ?', [Date.now(), user.user_id]); saveDatabase();
+        
         await interaction.reply({ content: `Bắt đầu ca trực lúc ${new Date().toLocaleTimeString('vi-VN')}.`, ephemeral: true });
-        if (logDutyChannel) await logDutyChannel.send({ embeds: [new EmbedBuilder().setTitle('🟢 Bắt đầu ca trực').setDescription(`**Thành viên:** <@${interaction.user.id}>`).setColor(0x00FF00)] });
+        
+        if (logDutyChannel) {
+            const embed = new EmbedBuilder()
+                .setTitle('🟢 NHÂN VIÊN BẮT ĐẦU CA TRỰC')
+                .setDescription(`**Nhân viên:** <@${interaction.user.id}>\n**Hành động:** Bấm On Duty\n**Thời gian:** ${new Date().toLocaleTimeString('vi-VN')}\n**Kênh Voice:** ${voiceChannel.name}`)
+                .setColor(0x00FF00).setThumbnail(interaction.user.displayAvatarURL()).setTimestamp();
+            await logDutyChannel.send({ embeds: [embed] });
+        }
         updateDutyBoard(interaction.channel);
 
     } else if (interaction.customId === 'offduty_btn') {
         if (!user.is_on_duty) return interaction.reply({ content: "Bạn chưa On Duty!", ephemeral: true });
+        
         const sessionTime = Date.now() - user.start_time;
-        db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = total_time + ? WHERE user_id = ?', [sessionTime, user.user_id]); saveDatabase();
+        const newTotal = user.total_time + sessionTime;
+        db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = ? WHERE user_id = ?', [newTotal, user.user_id]); saveDatabase();
+        
         await interaction.reply({ content: `Đã kết thúc ca. Ca này: **${formatTime(sessionTime)}**`, ephemeral: true });
-        if (logDutyChannel) await logDutyChannel.send({ embeds: [new EmbedBuilder().setTitle('🔴 Kết thúc ca trực').setDescription(`**Thành viên:** <@${interaction.user.id}>\n**Ca này:** ${formatTime(sessionTime)}`).setColor(0xFF0000)] });
+        
+        if (logDutyChannel) {
+            const embed = new EmbedBuilder()
+                .setTitle('🔴 NHÂN VIÊN KẾT THÚC CA TRỰC')
+                .setDescription(`**Nhân viên:** <@${interaction.user.id}>\n**Hành động:** Bấm Off Duty\n**Thời gian:** ${new Date().toLocaleTimeString('vi-VN')}\n**Thời gian ca này:** ${formatTime(sessionTime)}\n**Tổng thời gian:** ${formatTime(newTotal)}`)
+                .setColor(0xFF0000).setThumbnail(interaction.user.displayAvatarURL()).setTimestamp();
+            await logDutyChannel.send({ embeds: [embed] });
+        }
         updateDutyBoard(interaction.channel);
     }
 });
@@ -204,29 +215,59 @@ client.on(Events.InteractionCreate, async interaction => {
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot || !isDbReady) return;
 
-    // 1. CÁC LỆNH SETUP KÊNH LINH HOẠT
-    if (message.content === '!setupduty' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-        config.dutyChannelId = message.channel.id; saveConfig();
-        return message.reply(`✅ Đã đặt kênh này làm nơi nhận thông báo **On / Off Duty**.`);
-    }
-    if (message.content === '!setupwarning' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-        config.warningChannelId = message.channel.id; saveConfig();
-        return message.reply(`✅ Đã đặt kênh này làm nơi nhận **Cảnh báo (Disconnect/Trễ ca)**.`);
-    }
-    if (message.content === '!setupleave' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-        config.leaveChannelId = message.channel.id; saveConfig();
-        return message.reply(`✅ Đã đặt kênh này làm nơi nhận **Đơn xin nghỉ phép**.`);
-    }
-
-    // 2. LỆNH TẠO BẢNG CHẤM CÔNG TẠI KÊNH HIỆN TẠI
-    if (message.content === '!setupboard' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-        config.boardChannelId = message.channel.id; saveConfig();
+    // 1. LỆNH SETUP BẢNG (!setup)
+    if (message.content === '!setup' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
         await message.delete().catch(() => {});
+        config.boardChannelId = message.channel.id;
+        if (!config.dutyChannelId) config.dutyChannelId = message.channel.id;
+        if (!config.warningChannelId) config.warningChannelId = message.channel.id;
+        if (!config.leaveChannelId) config.leaveChannelId = message.channel.id;
+        saveConfig();
         await updateDutyBoard(message.channel);
         return message.channel.send("✅ Đã setup bảng chấm công tại kênh này!");
     }
 
-    // 3. LỆNH CŨ (GIỮ NGUYÊN)
+    // 2. CÁC LỆNH SETUP KÊNH RIÊNG
+    if (message.content === '!setupduty' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        config.dutyChannelId = message.channel.id; saveConfig();
+        return message.reply(`✅ Đã đặt kênh này làm nơi nhận **Log On/Off Duty**.`);
+    }
+    if (message.content === '!setupwarning' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        config.warningChannelId = message.channel.id; saveConfig();
+        return message.reply(`✅ Đã đặt kênh này làm nơi nhận **Cảnh báo**.`);
+    }
+    if (message.content === '!setupleave' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        config.leaveChannelId = message.channel.id; saveConfig();
+        return message.reply(`✅ Đã đặt kênh này làm nơi nhận **Đơn xin nghỉ**.`);
+    }
+
+    // 3. LỆNH RESET TOÀN BỘ DỮ LIỆU (!resetdata)
+    if (message.content === '!resetdata' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        try {
+            db.run('DELETE FROM users');
+            db.run('DELETE FROM history');
+            saveDatabase();
+            // Cập nhật lại bảng ngay lập tức
+            if (config.boardChannelId) updateDutyBoard(client.channels.cache.get(config.boardChannelId));
+            return message.reply("💥 **ĐÃ RESET TOÀN BỘ DỮ LIỆU!** Tất cả giờ giấc, ngày trực của mọi người đã trở về 0.");
+        } catch (e) {
+            return message.reply("❌ Có lỗi xảy ra khi reset dữ liệu.");
+        }
+    }
+
+    // 4. LỆNH RESET DỮ LIỆU 1 NGƯỜI (!resetuser @Tên)
+    if (message.content.startsWith('!resetuser') && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        const targetUser = message.mentions.users.first();
+        if (!targetUser) return message.reply("Vui lòng tag tên user muốn reset (VD: `!resetuser @Nam`).");
+        
+        db.run('DELETE FROM users WHERE user_id = ?', [targetUser.id]);
+        db.run('DELETE FROM history WHERE user_id = ?', [targetUser.id]);
+        saveDatabase();
+        if (config.boardChannelId) updateDutyBoard(client.channels.cache.get(config.boardChannelId));
+        return message.reply(`✅ Đã xóa toàn bộ dữ liệu chấm công của <@${targetUser.id}>.`);
+    }
+
+    // 5. CÁC LỆNH KHÁC
     if (message.content.startsWith('!settime') && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
         const args = message.content.split(' ');
         if (args.length !== 4) return message.reply("Cú pháp: `!settime @User 14:00 15:30`");
@@ -272,7 +313,13 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
         db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = total_time + ? WHERE user_id = ?', [sT, oldState.id]); saveDatabase();
         
         const wC = config.warningChannelId ? client.channels.cache.get(config.warningChannelId) : client.channels.cache.get(config.boardChannelId);
-        if (wC) wC.send(`⚠️ **CẢNH BÁO:** <@${oldState.id}> tự động Off Duty do rớt mạng!`);
+        if (wC) {
+            const warnEmbed = new EmbedBuilder()
+                .setTitle('⚠️ CẢNH BÁO RỚT MẠNG')
+                .setDescription(`**Nhân viên:** <@${oldState.id}>\n**Lý do:** Tự động rời Voice Channel khi đang On Duty.\n**Thời gian ca này:** ${formatTime(sT)}`)
+                .setColor(0xFFA500).setTimestamp();
+            wC.send({ embeds: [warnEmbed] });
+        }
     }
 });
 
@@ -281,7 +328,6 @@ setInterval(() => {
     if (!isDbReady) return;
     const now = new Date(); const cM = now.getHours() * 60 + now.getMinutes();
     
-    // Cập nhật bảng
     if (config.boardChannelId) {
         const channel = client.channels.cache.get(config.boardChannelId);
         if (channel) updateDutyBoard(channel);
