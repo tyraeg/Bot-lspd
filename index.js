@@ -5,7 +5,6 @@ const express = require('express');
 
 // ==========================================
 // ĐỌC CẤU HÌNH TỪ BIẾN MÔI TRƯỜNG (RENDER)
-// Bạn KHÔNG cần điền gì vào đây. Hãy điền trên Render.
 // ==========================================
 const TOKEN = process.env.TOKEN;
 const LOG_DUTY_ID = process.env.LOG_DUTY_ID;
@@ -14,7 +13,9 @@ const LOG_LEAVE_ID = process.env.LOG_LEAVE_ID;
 const DUTY_BOARD_CHANNEL_ID = process.env.DUTY_BOARD_CHANNEL_ID || ''; 
 
 let db;
+let isDbReady = false;
 
+// Khởi tạo Database
 async function initDatabase() {
     const SQL = await initSqlJs();
     if (fs.existsSync('duty.db')) {
@@ -49,14 +50,18 @@ async function initDatabase() {
     } catch (e) {}
     
     saveDatabase();
+    isDbReady = true;
+    console.log("✅ Khởi tạo Database thành công!");
 }
 
 function saveDatabase() {
+    if (!db) return;
     const data = db.export();
     fs.writeFileSync('duty.db', Buffer.from(data));
 }
 
 function checkAndAddDay(userId) {
+    if (!isDbReady) return;
     const today = new Date().toISOString().split('T')[0];
     const checkStmt = db.prepare('SELECT * FROM history WHERE user_id = ? AND date = ?');
     checkStmt.bind([userId, today]);
@@ -83,6 +88,7 @@ function checkLeaveStatus(user) {
 }
 
 const getOrCreateUser = (userId) => {
+    if (!isDbReady) return { user_id: userId, is_on_duty: 0, start_time: 0, total_time: 0, total_days: 0, is_on_leave: 0, leave_date: null };
     const stmt = db.prepare('SELECT * FROM users WHERE user_id = ?');
     stmt.bind([userId]);
     let user = null;
@@ -126,11 +132,14 @@ const client = new Client({
 });
 
 client.once(Events.ClientReady, () => {
-    console.log(`Bot đã sẵn sàng: ${client.user.tag}`);
+    console.log(`🚀 Bot đã sẵn sàng: ${client.user.tag}`);
+    // Khởi tạo DB sau khi bot đã online (tránh treo khởi động)
+    initDatabase().catch(err => console.error("❌ Lỗi khởi tạo DB:", err));
 });
 
 // --- BẢNG ĐIỂM DANH ---
 async function updateDutyBoard(channel) {
+    if (!isDbReady) return;
     try {
         const stmt = db.prepare('SELECT * FROM users');
         const users = [];
@@ -182,6 +191,7 @@ async function updateDutyBoard(channel) {
 // --- XỬ LÝ NÚT BẤM ---
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
+    if (!isDbReady) return interaction.reply({ content: "Hệ thống đang khởi động, vui lòng thử lại sau vài giây!", ephemeral: true });
 
     const logDutyChannel = client.channels.cache.get(LOG_DUTY_ID);
     const logLeaveChannel = client.channels.cache.get(LOG_LEAVE_ID);
@@ -267,6 +277,7 @@ client.on(Events.InteractionCreate, async interaction => {
 // --- LỆNH TEXT (!) ---
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot) return;
+    if (!isDbReady) return;
 
     if (message.content === '!setup' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
         await message.delete().catch(() => {});
@@ -352,6 +363,7 @@ client.on(Events.MessageCreate, async message => {
 
 // --- TỰ ĐỘNG OFF KHI RỜI VOICE ---
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+    if (!isDbReady) return;
     const userId = oldState.id;
     const user = getOrCreateUser(userId);
 
@@ -372,6 +384,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 
 // --- BỘ ĐẾM KIỂM TRA LỊCH TRỰC ---
 setInterval(() => {
+    if (!isDbReady) return;
     const now = new Date();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
@@ -433,10 +446,11 @@ app.listen(PORT, () => {
 });
 
 // KHỞI ĐỘNG BOT
-initDatabase().then(() => {
-    if (!TOKEN) {
-        console.error("LỖI: Chưa điền biến môi trường TOKEN trên Render!");
-        return;
-    }
-    client.login(TOKEN);
-}).catch(console.error);
+console.log("Đang kết nối tới Discord...");
+if (!TOKEN) {
+    console.error("❌ LỖI NGHIÊM TRỌNG: Chưa điền biến môi trường TOKEN trên Render!");
+} else {
+    client.login(TOKEN).catch(error => {
+        console.error("❌ LỖI ĐĂNG NHẬP DISCORD (Sai Token hoặc thiếu Intent):", error.message);
+    });
+}
