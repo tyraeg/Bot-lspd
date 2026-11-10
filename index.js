@@ -4,14 +4,14 @@ const fs = require('fs');
 const express = require('express');
 
 // ==========================================
-// CẤU HÌNH CỦA BẠN
+// ĐỌC CẤU HÌNH TỪ BIẾN MÔI TRƯỜNG (RENDER)
+// Bạn KHÔNG cần điền gì vào đây. Hãy điền trên Render.
 // ==========================================
-const TOKEN = process.env.TOKEN || 'DÁN_TOKEN_NEU_CHAY_LOCAL';
-const LOG_DUTY_ID = process.env.LOG_DUTY_ID || 'DÁN_ID_KÊNH_LOG_ON_OFF';
-const LOG_WARNING_ID = process.env.LOG_WARNING_ID || 'DÁN_ID_KÊNH_CANH_BAO';
-const LOG_LEAVE_ID = process.env.LOG_LEAVE_ID || 'DÁN_ID_KÊNH_XIN_NGHI';
+const TOKEN = process.env.TOKEN;
+const LOG_DUTY_ID = process.env.LOG_DUTY_ID;
+const LOG_WARNING_ID = process.env.LOG_WARNING_ID;
+const LOG_LEAVE_ID = process.env.LOG_LEAVE_ID;
 const DUTY_BOARD_CHANNEL_ID = process.env.DUTY_BOARD_CHANNEL_ID || ''; 
-// ==========================================
 
 let db;
 
@@ -268,13 +268,11 @@ client.on(Events.InteractionCreate, async interaction => {
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot) return;
 
-    // 1. Lệnh tạo bảng: !setup
     if (message.content === '!setup' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
         await message.delete().catch(() => {});
         updateDutyBoard(message.channel);
     }
 
-    // 2. Lệnh set giờ: !settime @User 14:00 15:30
     if (message.content.startsWith('!settime') && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
         const args = message.content.split(' ');
         if (args.length !== 4) return message.reply("Cú pháp sai! Dùng: `!settime @User 14:00 15:30`");
@@ -294,7 +292,6 @@ client.on(Events.MessageCreate, async message => {
         message.reply(`✅ Đã set lịch cho <@${targetUser.id}>: Từ **${startTime}** đến **${endTime}**.`);
     }
 
-    // 3. Lệnh xem BXH: !bxh
     if (message.content === '!bxh') {
         const stmt = db.prepare('SELECT * FROM users ORDER BY total_time DESC LIMIT 10');
         const users = [];
@@ -322,7 +319,6 @@ client.on(Events.MessageCreate, async message => {
         message.reply({ embeds: [embed] });
     }
 
-    // 4. Lệnh xem thống kê: !stats
     if (message.content === '!stats') {
         const stmt = db.prepare('SELECT * FROM users');
         const users = [];
@@ -438,5 +434,9 @@ app.listen(PORT, () => {
 
 // KHỞI ĐỘNG BOT
 initDatabase().then(() => {
+    if (!TOKEN) {
+        console.error("LỖI: Chưa điền biến môi trường TOKEN trên Render!");
+        return;
+    }
     client.login(TOKEN);
 }).catch(console.error);
