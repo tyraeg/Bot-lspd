@@ -305,13 +305,64 @@ client.on(Events.MessageCreate, async message => {
     }
 
     if (message.content === '!stats') {
-        const stmt = db.prepare('SELECT * FROM users'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
-        let tM = users.length, tD = 0, tT = 0, oC = 0;
-        for (const u of users) { tD += u.total_days; if (u.is_on_duty) { oC++; tT += (u.total_time + (Date.now() - u.start_time)); } else tT += u.total_time; }
-        message.reply({ embeds: [new EmbedBuilder().setTitle("📊 THỐNG KÊ").addFields(
-            { name: '👥 Nhân sự', value: `\`${tM}\``, inline: true }, { name: '🟢 Online', value: `\`${oC}\``, inline: true },
-            { name: '📅 Tổng ngày', value: `\`${tD}\``, inline: true }, { name: '⏱️ Tổng giờ', value: `\`${formatTime(tT)}\``, inline: true }
-        ).setColor(0x00BFFF)] });
+        const stmt = db.prepare('SELECT * FROM users ORDER BY total_time DESC');
+        const users = []; 
+        while (stmt.step()) users.push(stmt.getAsObject()); 
+        stmt.free();
+
+        if (users.length === 0) return message.reply("Chưa có ai trực trên server này.");
+
+        let tM = 0, tD = 0, tT = 0, oC = 0;
+        let detailList = "";
+
+        for (const u of users) {
+            // Bỏ qua những người không có tổng thời gian và không online (tránh rác)
+            if (u.total_time === 0 && u.is_on_duty === 0) continue;
+
+            tM++;
+            tD += u.total_days;
+            
+            const m = await message.guild.members.fetch(u.user_id).catch(() => null);
+            const name = m ? m.displayName : "Unknown";
+            
+            let time = u.total_time;
+            let statusText = "";
+            let currentSessionStr = "";
+
+            if (u.is_on_duty) {
+                oC++;
+                const currentSession = Date.now() - u.start_time;
+                time += currentSession;
+                tT += time;
+                statusText = "🟢 **Đang trực**";
+                currentSessionStr = ` *(Ca này: ${formatTime(currentSession)})*`;
+            } else {
+                tT += time;
+                statusText = "🔴 Đã nghỉ";
+            }
+
+            // Nếu đang nghỉ phép thì hiển thị khác
+            if (u.is_on_leave === 1) statusText = "🛌 Đang nghỉ phép";
+
+            detailList += `**${name}**: ${statusText}\n`;
+            detailList += `└ ⏱️ Tổng: **${formatTime(time)}**${currentSessionStr} | 📅 **${u.total_days} ngày**\n\n`;
+        }
+
+        if (tM === 0) return message.reply("Chưa có ai có dữ liệu trực.");
+
+        const embed = new EmbedBuilder()
+            .setTitle("📊 THỐNG KÊ CHI TIẾT SERVER")
+            .setDescription(`Dữ liệu tính đến lúc: **${getVNTime()}**\n\n` +
+                            `👥 **Tổng nhân sự hoạt động:** \`${tM}\`\n` +
+                            `🟢 **Đang Online:** \`${oC}\`\n` +
+                            `📅 **Tổng ngày trực:** \`${tD}\` ngày\n` +
+                            `⏱️ **Tổng thời gian:** \`${formatTime(tT)}\`\n` +
+                            `---------------------------------------\n` +
+                            detailList)
+            .setColor(0x00BFFF)
+            .setFooter({ text: `Hôm nay lúc ${new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })}` });
+
+        message.reply({ embeds: [embed] });
     }
 });
 
