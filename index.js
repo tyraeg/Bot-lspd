@@ -17,47 +17,55 @@ let isDbReady = false;
 
 // Khởi tạo Database
 async function initDatabase() {
-    const SQL = await initSqlJs();
-    if (fs.existsSync('duty.db')) {
-        const filebuffer = fs.readFileSync('duty.db');
-        db = new SQL.Database(filebuffer);
-    } else {
-        db = new SQL.Database();
-    }
-    
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-        user_id TEXT PRIMARY KEY,
-        is_on_duty INTEGER DEFAULT 0,
-        start_time INTEGER DEFAULT 0,
-        total_time INTEGER DEFAULT 0,
-        total_days INTEGER DEFAULT 0,
-        is_on_leave INTEGER DEFAULT 0,
-        leave_date TEXT DEFAULT NULL,
-        schedule_start TEXT DEFAULT NULL,
-        schedule_end TEXT DEFAULT NULL,
-        has_warned_schedule INTEGER DEFAULT 0
-    )`);
-    
-    try { db.run('ALTER TABLE users ADD COLUMN total_days INTEGER DEFAULT 0'); } catch (e) {}
-    try { db.run('ALTER TABLE users ADD COLUMN is_on_leave INTEGER DEFAULT 0'); } catch (e) {}
-    try { db.run('ALTER TABLE users ADD COLUMN leave_date TEXT DEFAULT NULL'); } catch (e) {}
-    try { db.run('ALTER TABLE users ADD COLUMN schedule_start TEXT DEFAULT NULL'); } catch (e) {}
-    try { db.run('ALTER TABLE users ADD COLUMN schedule_end TEXT DEFAULT NULL'); } catch (e) {}
-    try { db.run('ALTER TABLE users ADD COLUMN has_warned_schedule INTEGER DEFAULT 0'); } catch (e) {}
-
     try {
-        db.run(`CREATE TABLE IF NOT EXISTS history (user_id TEXT, date TEXT, PRIMARY KEY (user_id, date))`);
-    } catch (e) {}
-    
-    saveDatabase();
-    isDbReady = true;
-    console.log("✅ Khởi tạo Database thành công!");
+        const SQL = await initSqlJs();
+        if (fs.existsSync('duty.db')) {
+            const filebuffer = fs.readFileSync('duty.db');
+            db = new SQL.Database(filebuffer);
+        } else {
+            db = new SQL.Database();
+        }
+        
+        db.run(`CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            is_on_duty INTEGER DEFAULT 0,
+            start_time INTEGER DEFAULT 0,
+            total_time INTEGER DEFAULT 0,
+            total_days INTEGER DEFAULT 0,
+            is_on_leave INTEGER DEFAULT 0,
+            leave_date TEXT DEFAULT NULL,
+            schedule_start TEXT DEFAULT NULL,
+            schedule_end TEXT DEFAULT NULL,
+            has_warned_schedule INTEGER DEFAULT 0
+        )`);
+        
+        try { db.run('ALTER TABLE users ADD COLUMN total_days INTEGER DEFAULT 0'); } catch (e) {}
+        try { db.run('ALTER TABLE users ADD COLUMN is_on_leave INTEGER DEFAULT 0'); } catch (e) {}
+        try { db.run('ALTER TABLE users ADD COLUMN leave_date TEXT DEFAULT NULL'); } catch (e) {}
+        try { db.run('ALTER TABLE users ADD COLUMN schedule_start TEXT DEFAULT NULL'); } catch (e) {}
+        try { db.run('ALTER TABLE users ADD COLUMN schedule_end TEXT DEFAULT NULL'); } catch (e) {}
+        try { db.run('ALTER TABLE users ADD COLUMN has_warned_schedule INTEGER DEFAULT 0'); } catch (e) {}
+
+        try {
+            db.run(`CREATE TABLE IF NOT EXISTS history (user_id TEXT, date TEXT, PRIMARY KEY (user_id, date))`);
+        } catch (e) {}
+        
+        saveDatabase();
+        isDbReady = true;
+        console.log("✅ Khởi tạo Database thành công!");
+    } catch (error) {
+        console.error("❌ LỖI KHỞI TẠO DATABASE:", error);
+    }
 }
 
 function saveDatabase() {
     if (!db) return;
-    const data = db.export();
-    fs.writeFileSync('duty.db', Buffer.from(data));
+    try {
+        const data = db.export();
+        fs.writeFileSync('duty.db', Buffer.from(data));
+    } catch (e) {
+        console.error("Lỗi lưu file DB:", e);
+    }
 }
 
 function checkAndAddDay(userId) {
@@ -131,10 +139,16 @@ const client = new Client({
     ]
 });
 
+// Sự kiện Bot online
 client.once(Events.ClientReady, () => {
     console.log(`🚀 Bot đã sẵn sàng: ${client.user.tag}`);
-    // Khởi tạo DB sau khi bot đã online (tránh treo khởi động)
-    initDatabase().catch(err => console.error("❌ Lỗi khởi tạo DB:", err));
+    // Gọi khởi tạo Database sau khi bot đã online thành công
+    initDatabase();
+});
+
+// Bắt lỗi kết nối mạng của Discord
+client.on(Events.Error, (error) => {
+    console.error('❌ Lỗi Client Discord:', error);
 });
 
 // --- BẢNG ĐIỂM DANH ---
