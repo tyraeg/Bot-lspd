@@ -98,7 +98,7 @@ client.once(Events.ClientReady, async () => {
 });
 
 // ==========================================
-// CÁC HÀM VẼ ẢNH (ĐÃ XÓA ICON, CHỮ TO RÕ HƠN)
+// CÁC HÀM VẼ ẢNH (CANVAS)
 // ==========================================
 
 // 1. Vẽ Bảng Chấm Công
@@ -113,13 +113,10 @@ async function generateBoardImage(guild) {
     const ctx = canvas.getContext('2d');
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
-    
-    // Header
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 85);
     ctx.fillStyle = '#ffffff'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('BẢNG CHẤM CÔNG', padding, 50);
     ctx.font = '16px sans-serif'; ctx.fillStyle = '#b5bac1'; ctx.fillText(`Cập nhật: ${getVNTime()}`, padding, 75);
 
-    // Tiêu đề cột
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 85, width, 45);
     ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 18px sans-serif';
     ctx.fillText('TÊN NHÂN VIÊN', 90, 115); 
@@ -133,8 +130,6 @@ async function generateBoardImage(guild) {
         const name = member ? member.displayName : "Unknown";
         
         if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
-        
-        // Avatar
         try {
             const avatarURL = member ? member.user.displayAvatarURL({ extension: 'png', size: 64 }) : null;
             if (avatarURL) {
@@ -144,41 +139,49 @@ async function generateBoardImage(guild) {
             }
         } catch (e) {}
 
-        // Tên
-        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; 
-        ctx.fillText(name.substring(0, 20), 90, y + 40);
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(name.substring(0, 20), 90, y + 40);
 
-        // Trạng thái (Không dùng icon, chỉ dùng chữ và màu)
         let statusText = "OFFLINE", statusColor = "#ed4245";
         if (u.is_on_leave) { statusText = "ON LEAVE"; statusColor = "#fee75c"; }
         else if (u.is_on_duty) { statusText = "ON DUTY"; statusColor = "#57f287"; }
-        ctx.fillStyle = statusColor; ctx.font = 'bold 18px sans-serif'; 
-        ctx.fillText(statusText, 450, y + 40);
+        ctx.fillStyle = statusColor; ctx.font = 'bold 18px sans-serif'; ctx.fillText(statusText, 450, y + 40);
 
-        // Thời gian
         let time = u.total_time; if (u.is_on_duty) time += (Date.now() - u.start_time);
-        ctx.fillStyle = '#dbdee1'; ctx.font = '20px sans-serif'; 
-        ctx.fillText(formatTime(time), 680, y + 40);
-        
+        ctx.fillStyle = '#dbdee1'; ctx.font = '20px sans-serif'; ctx.fillText(formatTime(time), 680, y + 40);
         y += rowHeight;
     }
     return canvas.toBuffer('image/png');
 }
 
-// 2. Vẽ Bảng Xếp Hạng (BXH)
+// 2. Vẽ Bảng Xếp Hạng (BXH) - Chi tiết
 async function generateBXHImage(guild) {
     const stmt = db.prepare('SELECT * FROM users ORDER BY total_time DESC LIMIT 10'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
     if (users.length === 0) return null;
 
-    const rowHeight = 75, headerHeight = 90, padding = 20, width = 800;
+    // Đếm số người đã Online
+    let totalOnline = 0;
+    for (const u of users) {
+        if (u.total_time > 0 || u.is_on_duty === 1) totalOnline++;
+    }
+
+    const rowHeight = 70, headerHeight = 150, padding = 20, width = 850;
     const height = headerHeight + (users.length * rowHeight) + padding;
     
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
-    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, headerHeight);
-    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('BẢNG XẾP HẠNG', padding, 60);
+    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 100);
+    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('BẢNG XẾP HẠNG TOP 10', padding, 50);
+    ctx.fillStyle = '#b5bac1'; ctx.font = '16px sans-serif'; 
+    ctx.fillText(`Tuần này đã có ${totalOnline} nhân sự Online trực.`, padding, 80);
+
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 100, width, 50);
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 18px sans-serif';
+    ctx.fillText('HẠNG', 20, 132);
+    ctx.fillText('TÊN NHÂN VIÊN', 100, 132);
+    ctx.fillText('TRẠNG THÁI', 450, 132);
+    ctx.fillText('TỔNG THỜI GIAN', 650, 132);
 
     let y = headerHeight;
     for (let i = 0; i < users.length; i++) {
@@ -188,34 +191,27 @@ async function generateBXHImage(guild) {
         
         if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
 
-        // Hạng (Không dùng icon, chỉ dùng số)
         ctx.fillStyle = i === 0 ? '#FFD700' : i === 1 ? '#C0C0C0' : i === 2 ? '#CD7F32' : '#ffffff'; 
-        ctx.font = 'bold 26px sans-serif';
-        ctx.fillText(`TOP ${i + 1}`, padding, y + 48);
+        ctx.font = 'bold 24px sans-serif'; ctx.fillText(`#${i + 1}`, 25, y + 45);
 
-        // Avatar
         try {
             const avatarURL = member ? member.user.displayAvatarURL({ extension: 'png', size: 64 }) : null;
             if (avatarURL) {
                 const avatar = await loadImage(avatarURL);
-                ctx.save(); ctx.beginPath(); ctx.arc(padding + 120, y + 37, 22, 0, Math.PI * 2, true); ctx.closePath(); ctx.clip();
-                ctx.drawImage(avatar, padding + 98, y + 15, 44, 44); ctx.restore();
+                ctx.save(); ctx.beginPath(); ctx.arc(padding + 90, y + 35, 20, 0, Math.PI * 2, true); ctx.closePath(); ctx.clip();
+                ctx.drawImage(avatar, padding + 70, y + 15, 40, 40); ctx.restore();
             }
         } catch (e) {}
+        
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(name.substring(0, 18), 130, y + 42);
 
-        // Tên
-        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 22px sans-serif'; 
-        ctx.fillText(name.substring(0, 20), padding + 160, y + 45);
+        let statusText = "OFFLINE", statusColor = "#ed4245"; 
+        if (u.is_on_leave) { statusText = "ON LEAVE"; statusColor = "#fee75c"; } 
+        else if (u.is_on_duty) { statusText = "ON DUTY"; statusColor = "#57f287"; } 
+        ctx.fillStyle = statusColor; ctx.font = 'bold 18px sans-serif'; ctx.fillText(statusText, 450, y + 42);
 
-        // Thời gian
         let time = u.total_time; if (u.is_on_duty) time += (Date.now() - u.start_time);
-        ctx.fillStyle = '#57f287'; ctx.font = 'bold 22px sans-serif'; 
-        ctx.fillText(formatTime(time), 500, y + 45);
-
-        // Số ngày
-        ctx.fillStyle = '#dbdee1'; ctx.font = '20px sans-serif'; 
-        ctx.fillText(`${u.total_days} Ngày`, 660, y + 45);
-
+        ctx.fillStyle = '#dbdee1'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(formatTime(time), 650, y + 42);
         y += rowHeight;
     }
     return canvas.toBuffer('image/png');
@@ -243,23 +239,17 @@ async function generateStatsImage(guild) {
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 120);
     ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('THỐNG KÊ SERVER', padding, 60);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 22px sans-serif'; ctx.fillText(`Tổng nhân sự: ${tM}   |   Đang Online: ${oC}`, padding, 100);
     
-    // Thông số tổng quan
-    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 22px sans-serif';
-    ctx.fillText(`Tổng nhân sự: ${tM}   |   Đang Online: ${oC}`, padding, 100);
-    
-    // Tiêu đề cột
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 130, width, 130);
     ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif';
     ctx.fillText('Tổng ngày trực:', padding, 165); 
     ctx.fillStyle = '#dbdee1'; ctx.fillText(`${tD} ngày`, 250, 165);
     
-    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif';
-    ctx.fillText('Tổng thời gian:', padding, 200); 
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif'; ctx.fillText('Tổng thời gian:', padding, 200); 
     ctx.fillStyle = '#dbdee1'; ctx.fillText(`${formatTime(tT)}`, 250, 200);
 
-    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif';
-    ctx.fillText('Danh sách nhân sự:', padding, 240);
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif'; ctx.fillText('Danh sách nhân sự:', padding, 240);
 
     let y = headerHeight;
     for (let i = 0; i < activeUsers.length; i++) {
@@ -269,22 +259,16 @@ async function generateStatsImage(guild) {
         
         if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
 
-        // Tên
-        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; 
-        ctx.fillText(name.substring(0, 20), 80, y + 40);
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(name.substring(0, 20), 80, y + 40);
 
-        // Trạng thái
         let statusText = "OFFLINE", statusColor = "#ed4245";
         if (u.is_on_leave) { statusText = "ON LEAVE"; statusColor = "#fee75c"; }
         else if (u.is_on_duty) { statusText = "ON DUTY"; statusColor = "#57f287"; }
-        ctx.fillStyle = statusColor; ctx.font = 'bold 18px sans-serif'; 
-        ctx.fillText(statusText, 400, y + 40);
+        ctx.fillStyle = statusColor; ctx.font = 'bold 18px sans-serif'; ctx.fillText(statusText, 400, y + 40);
 
-        // Thời gian
         let time = u.total_time; let extraStr = "";
         if (u.is_on_duty) { const sess = Date.now() - u.start_time; time += sess; extraStr = ` (+${formatTime(sess)})`; }
-        ctx.fillStyle = '#dbdee1'; ctx.font = '20px sans-serif'; 
-        ctx.fillText(`${formatTime(time)}${extraStr}`, 550, y + 40);
+        ctx.fillStyle = '#dbdee1'; ctx.font = '20px sans-serif'; ctx.fillText(`${formatTime(time)}${extraStr}`, 550, y + 40);
         
         y += rowHeight;
     }
