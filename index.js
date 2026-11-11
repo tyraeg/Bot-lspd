@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, PermissionFlagsBits, REST, Routes, SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, PermissionFlagsBits, REST, Routes, SlashCommandBuilder, AttachmentBuilder, ActivityType } = require('discord.js');
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const initSqlJs = require('sql.js');
 const fs = require('fs');
@@ -120,11 +120,23 @@ const commands = [
     new SlashCommandBuilder().setName('resetdata').setDescription('Xóa sạch toàn bộ dữ liệu'),
     new SlashCommandBuilder().setName('resetnghi').setDescription('Gỡ trạng thái nghỉ phép cho nhân viên').addUserOption(opt => opt.setName('user').setDescription('Chọn nhân viên').setRequired(true)),
     new SlashCommandBuilder().setName('export').setDescription('Xuất file sao lưu (Gửi qua DM)'),
-    new SlashCommandBuilder().setName('import').setDescription('Nhập file sao lưu').addAttachmentOption(opt => opt.setName('file').setDescription('File json').setRequired(true))
+    new SlashCommandBuilder().setName('import').setDescription('Nhập file sao lưu').addAttachmentOption(opt => opt.setName('file').setDescription('File json').setRequired(true)),
+    // LỆNH SET STATUS MỚI
+    new SlashCommandBuilder().setName('setstatus').setDescription('Đổi trạng thái của Bot')
+        .addStringOption(opt => opt.setName('type').setDescription('Chọn loại trạng thái (Playing, Watching, Listening)').setRequired(true).addChoices(
+            { name: 'Đang Chơi (Playing)', value: 'PLAYING' },
+            { name: 'Đang Xem (Watching)', value: 'WATCHING' },
+            { name: 'Đang Nghe (Listening)', value: 'LISTENING' }
+        ))
+        .addStringOption(opt => opt.setName('text').setDescription('Nhập nội dung trạng thái').setRequired(true))
 ].map(command => command.toJSON());
 
 client.once(Events.ClientReady, async () => {
     console.log(`🚀 BOT ĐÃ ONLINE: ${client.user.tag}`);
+    
+    // ĐẶT TRẠNG THÁI MẶC ĐỊNH KHI KHỞI ĐỘNG
+    client.user.setActivity('LSPD - GtaNetWork', { type: ActivityType.Watching });
+
     loadConfig(); initDatabase();
     try { const rest = new REST({ version: '10' }).setToken(TOKEN); await rest.put(Routes.applicationCommands(client.user.id), { body: commands }); console.log('✅ Đã đăng ký lệnh Slash!'); } catch (error) { console.error('❌ Lỗi đăng ký lệnh:', error); }
 });
@@ -451,6 +463,21 @@ client.on(Events.InteractionCreate, async interaction => {
                 });
             }).on("error", () => interaction.editReply("❌ Lỗi tải file."));
             return;
+        }
+
+        // LỆNH ĐỔI STATUS
+        if (commandName === 'setstatus') {
+            const type = options.getString('type');
+            const text = options.getString('text');
+            
+            const activityTypes = {
+                'PLAYING': ActivityType.Playing,
+                'WATCHING': ActivityType.Watching,
+                'LISTENING': ActivityType.Listening
+            };
+
+            client.user.setActivity(text, { type: activityTypes[type] });
+            return interaction.reply({ content: `✅ Đã đổi trạng thái thành **${type} ${text}**`, ephemeral: true });
         }
     }
 
