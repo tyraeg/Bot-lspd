@@ -146,7 +146,7 @@ async function generateBoardImage(guild) {
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 85);
-    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('BẢNG CHẤM CÔNG', padding, 50);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('Danh Sách Nhân Sự LSPD GtaNetWork', padding, 50);
     ctx.font = '16px sans-serif'; ctx.fillStyle = '#b5bac1'; ctx.fillText(`Cập nhật: ${getVNTime()}`, padding, 75);
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 85, width, 45);
@@ -201,7 +201,7 @@ async function generateBXHImage(guild) {
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 100);
-    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('BẢNG XẾP HẠNG TOP 10', padding, 50);
+    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('Bảng Xếp Hạng Nhận Sự LSPD - GtaNetWork', padding, 50);
     ctx.fillStyle = '#b5bac1'; ctx.font = '16px sans-serif'; ctx.fillText(`Tổng số nhân sự từng Online: ${totalOnline} người.`, padding, 80);
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 100, width, 50);
@@ -278,7 +278,7 @@ async function generateStatsImage(guild) {
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 120);
-    ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('THỐNG KÊ CHI TIẾT', padding, 55);
+    ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('THỐNG KÊ LSPD GtaNetWork', padding, 55);
     ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; 
     ctx.fillText(`Tổng nhân sự: ${tM}   |   Đang Online: ${oC}`, padding, 90);
     
@@ -478,7 +478,7 @@ client.on(Events.InteractionCreate, async interaction => {
             .setDescription(`**Nhân viên:** <@${interaction.user.id}>\n**Thời gian gửi:** ${timeStr} - ${dateStr}\n\nVui lòng Admin xem xét và bấm nút bên dưới để duyệt.`)
             .setColor(0xFFA500) 
             .setThumbnail(interaction.user.displayAvatarURL())
-            .setFooter({ text: 'Hệ thống quản lý nhân sự' })
+            .setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' })
             .setTimestamp();
 
         if(logLeaveChannel) {
