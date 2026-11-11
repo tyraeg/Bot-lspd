@@ -18,12 +18,16 @@ let lastBoardUpdateTime = Date.now();
 
 async function initDatabase() {
     try {
+        // XÓA DÒNG NÀY SAU KHI BOT ONLINE THÀNH CÔNG VÀ TẠO DB MỚI
+        if (fs.existsSync('duty.db')) { fs.unlinkSync('duty.db'); }
+
         const SQL = await initSqlJs();
         if (fs.existsSync('duty.db')) {
             try { db = new SQL.Database(fs.readFileSync('duty.db')); } 
             catch(e) { fs.unlinkSync('duty.db'); db = new SQL.Database(); }
         } else { db = new SQL.Database(); }
         
+        // Tạo bảng users
         db.run(`CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY, is_on_duty INTEGER DEFAULT 0, start_time INTEGER DEFAULT 0,
             total_time INTEGER DEFAULT 0, total_days INTEGER DEFAULT 0, is_on_leave INTEGER DEFAULT 0,
@@ -38,7 +42,10 @@ async function initDatabase() {
         try { db.run('ALTER TABLE users ADD COLUMN schedule_end TEXT DEFAULT NULL'); } catch (e) {}
         try { db.run('ALTER TABLE users ADD COLUMN has_warned_schedule INTEGER DEFAULT 0'); } catch (e) {}
         
-        // Bảng lịch sử tuần (Lưu thời gian trực của tuần hiện tại)
+        // Tạo bảng history (Bảng bị thiếu gây ra lỗi của bạn)
+        db.run(`CREATE TABLE IF NOT EXISTS history (user_id TEXT, date TEXT, PRIMARY KEY (user_id, date))`);
+        
+        // Tạo bảng weekly_history
         db.run(`CREATE TABLE IF NOT EXISTS weekly_history (
             user_id TEXT, week_id TEXT, week_time INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, week_id)
@@ -51,24 +58,28 @@ async function initDatabase() {
 
 function saveDatabase() { if (db) { try { fs.writeFileSync('duty.db', Buffer.from(db.export())); } catch (e) {} } }
 
-// Lấy ID tuần hiện tại (Ví dụ: 2023-W42)
 function getWeekId() {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
-    const week1 = new Date(d.getFullYear(), 0, 4);
-    const weekNum = 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
-    return `${d.getFullYear()}-W${weekNum}`;
+    try {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
+        const week1 = new Date(d.getFullYear(), 0, 4);
+        const weekNum = 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+        return `${d.getFullYear()}-W${weekNum}`;
+    } catch (e) { return "UNKNOWN-WEEK"; }
 }
 
 function checkAndAddDay(userId) {
     if (!isDbReady) return;
-    const today = new Date().toISOString().split('T')[0];
-    const stmt = db.prepare('SELECT * FROM history WHERE user_id = ? AND date = ?');
-    stmt.bind([userId, today]);
-    if (!stmt.step()) { db.run('INSERT INTO history (user_id, date) VALUES (?, ?)', [userId, today]); db.run('UPDATE users SET total_days = total_days + 1 WHERE user_id = ?', [userId]); saveDatabase(); }
-    stmt.free();
+    try {
+        const today = new Date().toISOString().split('T')[0];
+        const stmt = db.prepare('SELECT * FROM history WHERE user_id = ? AND date = ?');
+        stmt.bind([userId, today]);
+        if (!stmt.step()) { db.run('INSERT INTO history (user_id, date) VALUES (?, ?)', [userId, today]); db.run('UPDATE users SET total_days = total_days + 1 WHERE user_id = ?', [userId]); saveDatabase(); }
+        stmt.free();
+    } catch (e) { console.log("Lỗi checkAndAddDay:", e); }
 }
+
 function checkLeaveStatus(user) {
     if (user.is_on_leave === 1 && user.leave_date) {
         const today = new Date().toISOString().split('T')[0];
@@ -169,7 +180,7 @@ async function generateBoardImage(guild) {
     return canvas.toBuffer('image/png');
 }
 
-// 2. Vẽ Bảng Xếp Hạng (BXH) - Chi tiết
+// 2. Vẽ Bảng Xếp Hạng (BXH)
 async function generateBXHImage(guild) {
     const stmt = db.prepare('SELECT * FROM users ORDER BY total_time DESC LIMIT 10'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
     if (users.length === 0) return null;
@@ -229,10 +240,9 @@ async function generateBXHImage(guild) {
     return canvas.toBuffer('image/png');
 }
 
-// 3. Vẽ Bảng Thống Kê (Stats) - Chi tiết từng người (Có thêm Tuần Này)
+// 3. Vẽ Bảng Thống Kê (Stats) - Chi tiết
 async function generateStatsImage(guild) {
     const currentWeek = getWeekId();
-    // Lấy dữ liệu tổng hợp kèm thời gian tuần này
     const query = `
         SELECT u.*, COALESCE(w.week_time, 0) as week_time 
         FROM users u 
@@ -261,16 +271,12 @@ async function generateStatsImage(guild) {
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    // Nền
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
-    
-    // Header
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 120);
     ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('THỐNG KÊ CHI TIẾT', padding, 55);
     ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; 
     ctx.fillText(`Tổng nhân sự: ${tM}   |   Đang Online: ${oC}`, padding, 90);
     
-    // Tổng quan
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 130, width, 100);
     ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif';
     ctx.fillText('Tổng ngày trực:', padding, 165); 
@@ -280,12 +286,11 @@ async function generateStatsImage(guild) {
     ctx.fillText('Tổng thời gian:', padding, 200); 
     ctx.fillStyle = '#dbdee1'; ctx.fillText(`${formatTime(tT)}`, 250, 200);
 
-    // Tiêu đề cột (Thêm cột Tuần Này)
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 230, width, 50);
     ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 18px sans-serif';
     ctx.fillText('TÊN NHÂN VIÊN', 80, 262);
     ctx.fillText('TRẠNG THÁI', 380, 262);
-    ctx.fillText('TUẦN NÀY', 530, 262);  // Cột mới
+    ctx.fillText('TUẦN NÀY', 530, 262);
     ctx.fillText('TỔNG CỘNG', 680, 262);
 
     let y = headerHeight;
@@ -296,28 +301,20 @@ async function generateStatsImage(guild) {
         
         if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
 
-        // Tên
-        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px sans-serif'; 
-        ctx.fillText(name.substring(0, 18), 80, y + 40);
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(name.substring(0, 18), 80, y + 40);
 
-        // Trạng thái
         let statusText = "OFFLINE", statusColor = "#ed4245";
         if (u.is_on_leave) { statusText = "ON LEAVE"; statusColor = "#fee75c"; }
         else if (u.is_on_duty) { statusText = "ON DUTY"; statusColor = "#57f287"; }
-        ctx.fillStyle = statusColor; ctx.font = 'bold 16px sans-serif'; 
-        ctx.fillText(statusText, 380, y + 40);
+        ctx.fillStyle = statusColor; ctx.font = 'bold 16px sans-serif'; ctx.fillText(statusText, 380, y + 40);
 
-        // Tuần này (Màu xanh dương cho nổi bật)
         let weekTime = u.week_time;
-        if (u.is_on_duty) weekTime += (Date.now() - u.start_time); // Nếu đang trực thì cộng thêm giờ hiện tại vào tuần
-        ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 18px sans-serif'; 
-        ctx.fillText(formatTime(weekTime), 530, y + 40);
+        if (u.is_on_duty) weekTime += (Date.now() - u.start_time);
+        ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(formatTime(weekTime), 530, y + 40);
 
-        // Tổng cộng
         let totalTime = u.total_time; 
         if (u.is_on_duty) totalTime += (Date.now() - u.start_time);
-        ctx.fillStyle = '#dbdee1'; ctx.font = 'bold 18px sans-serif'; 
-        ctx.fillText(formatTime(totalTime), 680, y + 40);
+        ctx.fillStyle = '#dbdee1'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(formatTime(totalTime), 680, y + 40);
         
         y += rowHeight;
     }
@@ -466,10 +463,8 @@ client.on(Events.InteractionCreate, async interaction => {
         const sessionTime = Date.now() - user.start_time; 
         const newTotal = user.total_time + sessionTime;
         
-        // Cập nhật tổng thời gian
         db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = ? WHERE user_id = ?', [newTotal, user.user_id]); 
         
-        // Cập nhật thời gian tuần này
         const weekStmt = db.prepare('SELECT * FROM weekly_history WHERE user_id = ? AND week_id = ?');
         weekStmt.bind([user.user_id, currentWeek]);
         if (weekStmt.step()) {
@@ -532,7 +527,6 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
         
         db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = total_time + ? WHERE user_id = ?', [sT, oldState.id]); 
         
-        // Cập nhật tuần nếu bị rớt mạng
         const weekStmt = db.prepare('SELECT * FROM weekly_history WHERE user_id = ? AND week_id = ?');
         weekStmt.bind([oldState.id, currentWeek]);
         if (weekStmt.step()) {
