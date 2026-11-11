@@ -97,14 +97,14 @@ client.once(Events.ClientReady, async () => {
 });
 
 // ==========================================
-// TÍNH NĂNG VẼ ẢNH BẢNG CHẤM CÔNG (CÓ TIÊU ĐỀ CỘT)
+// TÍNH NĂNG VẼ ẢNH BẢNG CHẤM CÔNG
 // ==========================================
 async function generateBoardImage(guild) {
     const stmt = db.prepare('SELECT * FROM users'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
     const activeUsers = users.filter(u => u.total_time > 0 || u.is_on_duty === 1 || u.is_on_leave === 1);
     
     const rowHeight = 60;
-    const headerHeight = 120; // Tăng chiều cao header để chứa tiêu đề cột
+    const headerHeight = 120; 
     const padding = 20;
     const width = 800;
     const height = headerHeight + (activeUsers.length * rowHeight) + padding;
@@ -112,100 +112,58 @@ async function generateBoardImage(guild) {
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    // 1. VẼ NỀN TỔNG THỂ
-    ctx.fillStyle = '#1e1f22'; 
-    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
 
-    // 2. VẼ HEADER (Tên bảng + Ngày giờ)
-    ctx.fillStyle = '#2b2d31'; 
-    ctx.fillRect(0, 0, width, 80);
-    ctx.fillStyle = '#ffffff'; 
-    ctx.font = 'bold 30px sans-serif';
+    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 80);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 30px sans-serif';
     ctx.fillText('BẢNG CHẤM CÔNG', padding, 45);
-    ctx.font = '14px sans-serif'; 
-    ctx.fillStyle = '#b5bac1';
+    ctx.font = '14px sans-serif'; ctx.fillStyle = '#b5bac1';
     ctx.fillText(`Cập nhật: ${getVNTime()}`, padding, 70);
 
-    // 3. VẼ TIÊU ĐỀ CỘT (TÊN - TRẠNG THÁI - THỜI GIAN)
-    ctx.fillStyle = '#1e1f22'; // Nền đen mỏng
-    ctx.fillRect(0, 80, width, 40);
-    
-    ctx.fillStyle = '#f2f3f5'; // Màu chữ sáng
-    ctx.font = 'bold 16px sans-serif';
-    
-    // Căn lề trái cho TÊN (X = 80)
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 80, width, 40);
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 16px sans-serif';
     ctx.fillText('TÊN NHÂN VIÊN', 80, 105);
-    
-    // Căn giữa cho TRẠNG THÁI (X = 450)
     ctx.fillText('TRẠNG THÁI', 450, 105);
-    
-    // Căn phải cho THỜI GIAN (X = 700)
     ctx.fillText('THỜI GIAN', 700, 105);
 
-    // 4. VẼ DANH SÁCH NHÂN VIÊN
     let y = headerHeight;
     for (let i = 0; i < activeUsers.length; i++) {
         let u = checkLeaveStatus(activeUsers[i]);
         const member = await guild.members.fetch(u.user_id).catch(() => null);
         const name = member ? member.displayName : "Unknown";
         
-        // Nền xen kẽ (Zebra)
-        if (i % 2 === 0) { 
-            ctx.fillStyle = '#232428'; 
-            ctx.fillRect(0, y, width, rowHeight); 
-        }
+        if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
 
-        // Vẽ Avatar (X = 20, Y = y + 10)
         try {
             const avatarURL = member ? member.user.displayAvatarURL({ extension: 'png', size: 64 }) : null;
             if (avatarURL) {
                 const avatar = await loadImage(avatarURL);
-                ctx.save(); 
-                ctx.beginPath(); 
-                ctx.arc(padding + 20, y + 30, 20, 0, Math.PI * 2, true); 
-                ctx.closePath(); 
-                ctx.clip();
-                ctx.drawImage(avatar, padding, y + 10, 40, 40); 
-                ctx.restore();
+                ctx.save(); ctx.beginPath(); ctx.arc(padding + 20, y + 30, 20, 0, Math.PI * 2, true); ctx.closePath(); ctx.clip();
+                ctx.drawImage(avatar, padding, y + 10, 40, 40); ctx.restore();
             }
         } catch (e) {}
 
-        // Vẽ Tên (Căn trái, X = 80)
-        ctx.fillStyle = '#ffffff'; 
-        ctx.font = 'bold 18px sans-serif'; 
-        ctx.fillText(name.substring(0, 20), 80, y + 35);
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(name.substring(0, 20), 80, y + 35);
 
-        // Vẽ Trạng thái (Căn giữa, X = 450)
         let statusText = "OFFLINE", statusColor = "#ed4245";
         if (u.is_on_leave) { statusText = "ON LEAVE"; statusColor = "#fee75c"; }
         else if (u.is_on_duty) { statusText = "ON DUTY"; statusColor = "#57f287"; }
-        ctx.fillStyle = statusColor; 
-        ctx.font = 'bold 16px sans-serif'; 
-        ctx.fillText(statusText, 450, y + 35);
+        ctx.fillStyle = statusColor; ctx.font = 'bold 16px sans-serif'; ctx.fillText(statusText, 450, y + 35);
 
-        // Vẽ Thời gian (Căn phải, X = 700)
-        let time = u.total_time; 
-        if (u.is_on_duty) time += (Date.now() - u.start_time);
-        ctx.fillStyle = '#dbdee1'; 
-        ctx.font = '18px sans-serif'; 
-        ctx.fillText(formatTime(time), 700, y + 35);
-        
+        let time = u.total_time; if (u.is_on_duty) time += (Date.now() - u.start_time);
+        ctx.fillStyle = '#dbdee1'; ctx.font = '18px sans-serif'; ctx.fillText(formatTime(time), 700, y + 35);
         y += rowHeight;
     }
     return canvas.toBuffer('image/png');
 }
 
-// Hàm cập nhật bảng (XÓA CŨ - GỬI MỚI)
+// Hàm cập nhật bảng (Gửi cả Văn bản + Ảnh, tự động xóa cũ)
 async function updateDutyBoard(channel) {
     if (!isDbReady) return;
     try {
-        let buffer;
-        try {
-            buffer = await generateBoardImage(channel.guild);
-        } catch (err) {
-            console.error("Lỗi vẽ ảnh, chuyển sang gửi chữ:", err);
-            buffer = null; // Kích hoạt Fallback
-        }
+        let buffer = null;
+        try { buffer = await generateBoardImage(channel.guild); } 
+        catch (err) { console.error("Lỗi vẽ ảnh, chỉ gửi văn bản:", err); }
         
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('onduty_btn').setLabel('On Duty').setStyle(ButtonStyle.Success).setEmoji('🟢'),
@@ -213,28 +171,28 @@ async function updateDutyBoard(channel) {
             new ButtonBuilder().setCustomId('leave_btn').setLabel('Xin Nghỉ').setStyle(ButtonStyle.Secondary).setEmoji('🛌')
         );
 
-        // QUÉT VÀ XÓA CÁC TIN NHẮN CŨ CỦA BOT TRONG KÊNH
+        // Xóa bảng cũ
         const msgs = await channel.messages.fetch({ limit: 50 }); 
         const botMessages = msgs.filter(m => m.author.id === client.user.id);
-        for (const m of botMessages.values()) {
-            await m.delete().catch(() => {}); 
-        }
+        for (const m of botMessages.values()) { await m.delete().catch(() => {}); }
 
-        // GỬI BẢNG MỚI
+        // Chuẩn bị Văn bản (Embed)
+        const stmt = db.prepare('SELECT * FROM users'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
+        let desc = "```\nMEMBER            STATUS     TOTAL TIME\n---------------------------------------\n";
+        for (let u of users) {
+            u = checkLeaveStatus(u); const m = await channel.guild.members.fetch(u.user_id).catch(() => null); if (!m) continue;
+            let st = u.is_on_leave ? "🛌 ON LEAVE" : (u.is_on_duty ? "🟢 ON DUTY " : "🔴 OFFLINE ");
+            let tm = formatTime(u.total_time); if (u.is_on_duty) tm = formatTime(u.total_time + (Date.now() - u.start_time)) + " (Live)";
+            desc += `${m.displayName.padEnd(18).substring(0, 18)} ${st} ${tm}\n`;
+        }
+        desc += "```";
+        const embed = new EmbedBuilder().setTitle("BẢNG CHẤM CÔNG (DUTY LIST)").setDescription(desc).setColor(0x2b2d31).setFooter({ text: `Cập nhật: ${getVNTime()}` });
+
+        // Gửi cả Văn bản và Ảnh
         if (buffer) {
             const attachment = new AttachmentBuilder(buffer, { name: 'dutylist.png' });
-            await channel.send({ files: [attachment], components: [row] });
+            await channel.send({ content: "**Bảng chấm công vừa được cập nhật:**", embeds: [embed], files: [attachment], components: [row] });
         } else {
-            const stmt = db.prepare('SELECT * FROM users'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
-            let desc = "```\nMEMBER            STATUS     TOTAL TIME\n---------------------------------------\n";
-            for (let u of users) {
-                u = checkLeaveStatus(u); const m = await channel.guild.members.fetch(u.user_id).catch(() => null); if (!m) continue;
-                let st = u.is_on_leave ? "🛌 ON LEAVE" : (u.is_on_duty ? "🟢 ON DUTY " : "🔴 OFFLINE ");
-                let tm = formatTime(u.total_time); if (u.is_on_duty) tm = formatTime(u.total_time + (Date.now() - u.start_time)) + " (Live)";
-                desc += `${m.displayName.padEnd(18).substring(0, 18)} ${st} ${tm}\n`;
-            }
-            desc += "```";
-            const embed = new EmbedBuilder().setTitle("BẢNG CHẤM CÔNG (DUTY LIST)").setDescription(desc).setColor(0x2b2d31).setFooter({ text: `Cập nhật: ${getVNTime()}` });
             await channel.send({ embeds: [embed], components: [row] });
         }
     } catch (e) { console.error(e); }
@@ -353,7 +311,7 @@ client.on(Events.MessageCreate, async message => {
         if (!config.warningChannelId) config.warningChannelId = message.channel.id;
         if (!config.leaveChannelId) config.leaveChannelId = message.channel.id;
         saveConfig(); await updateDutyBoard(message.channel);
-        return message.channel.send("✅ Đã setup bảng chấm công (Dạng Ảnh) tại kênh này!");
+        return message.channel.send("✅ Đã setup bảng chấm công (Dạng Ảnh + Văn bản) tại kênh này!");
     }
 
     if (message.content === '!bxh') {
