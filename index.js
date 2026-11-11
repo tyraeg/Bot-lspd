@@ -18,16 +18,12 @@ let lastBoardUpdateTime = Date.now();
 
 async function initDatabase() {
     try {
-        // XÓA DÒNG NÀY SAU KHI BOT ONLINE THÀNH CÔNG VÀ TẠO DB MỚI
-        if (fs.existsSync('duty.db')) { fs.unlinkSync('duty.db'); }
-
         const SQL = await initSqlJs();
         if (fs.existsSync('duty.db')) {
             try { db = new SQL.Database(fs.readFileSync('duty.db')); } 
             catch(e) { fs.unlinkSync('duty.db'); db = new SQL.Database(); }
         } else { db = new SQL.Database(); }
         
-        // Tạo bảng users
         db.run(`CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY, is_on_duty INTEGER DEFAULT 0, start_time INTEGER DEFAULT 0,
             total_time INTEGER DEFAULT 0, total_days INTEGER DEFAULT 0, is_on_leave INTEGER DEFAULT 0,
@@ -42,10 +38,8 @@ async function initDatabase() {
         try { db.run('ALTER TABLE users ADD COLUMN schedule_end TEXT DEFAULT NULL'); } catch (e) {}
         try { db.run('ALTER TABLE users ADD COLUMN has_warned_schedule INTEGER DEFAULT 0'); } catch (e) {}
         
-        // Tạo bảng history (Bảng bị thiếu gây ra lỗi của bạn)
         db.run(`CREATE TABLE IF NOT EXISTS history (user_id TEXT, date TEXT, PRIMARY KEY (user_id, date))`);
         
-        // Tạo bảng weekly_history
         db.run(`CREATE TABLE IF NOT EXISTS weekly_history (
             user_id TEXT, week_id TEXT, week_time INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, week_id)
@@ -240,7 +234,7 @@ async function generateBXHImage(guild) {
     return canvas.toBuffer('image/png');
 }
 
-// 3. Vẽ Bảng Thống Kê (Stats) - Chi tiết
+// 3. Vẽ Bảng Thống Kê (Stats)
 async function generateStatsImage(guild) {
     const currentWeek = getWeekId();
     const query = `
@@ -330,10 +324,23 @@ async function updateDutyBoard(channel) {
         let buffer = null;
         try { buffer = await generateBoardImage(channel.guild); } catch (err) { console.error("Lỗi vẽ bảng:", err); }
         
+        // CẬP NHẬT EMOJI TÙY CHỈNH VÀO NÚT BẤM
         const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('onduty_btn').setLabel('On Duty').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId('offduty_btn').setLabel('Off Duty').setStyle(ButtonStyle.Danger),
-            new ButtonBuilder().setCustomId('leave_btn').setLabel('Xin Nghỉ').setStyle(ButtonStyle.Secondary)
+            new ButtonBuilder()
+                .setCustomId('onduty_btn')
+                .setLabel('On Duty')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('1570176137722724435'), // ID Emoji On của bạn
+            new ButtonBuilder()
+                .setCustomId('offduty_btn')
+                .setLabel('Off Duty')
+                .setStyle(ButtonStyle.Danger)
+                .setEmoji('1570176005883306068'), // ID Emoji Off của bạn
+            new ButtonBuilder()
+                .setCustomId('leave_btn')
+                .setLabel('Xin Nghỉ')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('🛌') 
         );
 
         const msgs = await channel.messages.fetch({ limit: 50 }); 
