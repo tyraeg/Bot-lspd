@@ -151,7 +151,7 @@ async function generateBoardImage(guild) {
     return canvas.toBuffer('image/png');
 }
 
-// Hàm cập nhật bảng (Có Fallback nếu vẽ ảnh lỗi)
+// Hàm cập nhật bảng (XÓA CŨ - GỬI MỚI)
 async function updateDutyBoard(channel) {
     if (!isDbReady) return;
     try {
@@ -169,15 +169,18 @@ async function updateDutyBoard(channel) {
             new ButtonBuilder().setCustomId('leave_btn').setLabel('Xin Nghỉ').setStyle(ButtonStyle.Secondary).setEmoji('🛌')
         );
 
-        const msgs = await channel.messages.fetch({ limit: 10 }); 
-        const bM = msgs.find(x => x.author.id === client.user.id && (x.attachments.size > 0 || x.embeds.length > 0));
+        // QUÉT VÀ XÓA CÁC TIN NHẮN CŨ CỦA BOT TRONG KÊNH
+        const msgs = await channel.messages.fetch({ limit: 50 }); 
+        const botMessages = msgs.filter(m => m.author.id === client.user.id);
+        for (const m of botMessages.values()) {
+            await m.delete().catch(() => {}); 
+        }
 
+        // GỬI BẢNG MỚI
         if (buffer) {
             const attachment = new AttachmentBuilder(buffer, { name: 'dutylist.png' });
-            if (bM) await bM.edit({ files: [attachment], embeds: [], components: [row] });
-            else await channel.send({ files: [attachment], components: [row] });
+            await channel.send({ files: [attachment], components: [row] });
         } else {
-            // FALLBACK VĂN BẢN (Nếu vẽ ảnh lỗi)
             const stmt = db.prepare('SELECT * FROM users'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
             let desc = "```\nMEMBER            STATUS     TOTAL TIME\n---------------------------------------\n";
             for (let u of users) {
@@ -188,8 +191,7 @@ async function updateDutyBoard(channel) {
             }
             desc += "```";
             const embed = new EmbedBuilder().setTitle("BẢNG CHẤM CÔNG (DUTY LIST)").setDescription(desc).setColor(0x2b2d31).setFooter({ text: `Cập nhật: ${getVNTime()}` });
-            if (bM) await bM.edit({ files: [], embeds: [embed], components: [row] });
-            else await channel.send({ embeds: [embed], components: [row] });
+            await channel.send({ embeds: [embed], components: [row] });
         }
     } catch (e) { console.error(e); }
 }
