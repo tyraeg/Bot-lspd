@@ -14,6 +14,7 @@ function saveConfig() { fs.writeFileSync('config.json', JSON.stringify(config, n
 
 let db;
 let isDbReady = false;
+let lastBoardUpdateTime = Date.now(); // Biến lưu thời gian cập nhật bảng gần nhất
 
 async function initDatabase() {
     try {
@@ -157,7 +158,7 @@ async function generateBoardImage(guild) {
     return canvas.toBuffer('image/png');
 }
 
-// Hàm cập nhật bảng (Chỉ gửi Ảnh, tự động xóa cũ)
+// Hàm cập nhật bảng (Chỉ gửi Ảnh + Hiển thị số phút)
 async function updateDutyBoard(channel) {
     if (!isDbReady) return;
     try {
@@ -182,16 +183,31 @@ async function updateDutyBoard(channel) {
             await m.delete().catch(() => {}); 
         }
 
-        // 2. CHỈ GỬI ẢNH
+        // 2. TÍNH THỜI GIAN ĐÃ TRÔI QUA
+        const now = Date.now();
+        const diffMinutes = Math.floor((now - lastBoardUpdateTime) / 60000);
+        
+        // Nếu là lần đầu tiên (biến lưu chưa có) hoặc dưới 1 phút thì ghi "Vừa xong", ngược lại ghi "X phút"
+        let timeText = "";
+        if (diffMinutes < 1) {
+            timeText = `**Bảng chấm công vừa được cập nhật: Vừa xong**`;
+        } else {
+            timeText = `**Bảng chấm công vừa được cập nhật: ${diffMinutes} phút**`;
+        }
+        
+        // Cập nhật lại mốc thời gian cho lần sau
+        lastBoardUpdateTime = now;
+
+        // 3. CHỈ GỬI ẢNH
         if (buffer) {
             const attachment = new AttachmentBuilder(buffer, { name: 'dutylist.png' });
             await channel.send({ 
-                content: "**Bảng chấm công vừa được cập nhật:**", 
+                content: timeText, 
                 files: [attachment], 
                 components: [row] 
             });
         } else {
-            // Fallback: Nếu lỗi không vẽ được ảnh, gửi văn bản để không bị mất nút
+            // Fallback: Nếu lỗi không vẽ được ảnh, gửi văn bản
             const stmt = db.prepare('SELECT * FROM users'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
             let desc = "```\nMEMBER            STATUS     TOTAL TIME\n---------------------------------------\n";
             for (let u of users) {
@@ -202,7 +218,11 @@ async function updateDutyBoard(channel) {
             }
             desc += "```";
             const embed = new EmbedBuilder().setTitle("BẢNG CHẤM CÔNG (DUTY LIST)").setDescription(desc).setColor(0x2b2d31);
-            await channel.send({ embeds: [embed], components: [row] });
+            await channel.send({ 
+                content: timeText,
+                embeds: [embed], 
+                components: [row] 
+            });
         }
     } catch (e) { console.error(e); }
 }
