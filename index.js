@@ -9,8 +9,7 @@ const TOKEN = process.env.TOKEN;
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 
 // ==========================================
-// ĐIỀN ID ADMIN VÀO ĐÂY (Người duy nhất có quyền dùng lệnh quản lý)
-// Lấy ID: Chuột phải vào tên Admin -> Copy ID
+// ID ADMIN ĐÃ ĐƯỢC CẬP NHẬT
 // ==========================================
 const ADMIN_ID = '1498554147304247296'; 
 // ==========================================
@@ -461,7 +460,6 @@ client.on(Events.InteractionCreate, async interaction => {
     const logDutyChannel = config.dutyChannelId ? client.channels.cache.get(config.dutyChannelId) : client.channels.cache.get(config.boardChannelId);
     const logLeaveChannel = config.leaveChannelId ? client.channels.cache.get(config.leaveChannelId) : client.channels.cache.get(config.boardChannelId);
 
-    // XỬ LÝ NÚT XIN NGHỈ
     if (interaction.customId === 'leave_btn') {
         const user = getOrCreateUser(interaction.user.id);
         if (user.is_on_leave === 1) return interaction.reply({ content: "❌ Bạn đã xin nghỉ hôm nay rồi!", ephemeral: true });
@@ -489,9 +487,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ content: "✅ Đã gửi đơn xin nghỉ đến Admin.", ephemeral: true });
     }
 
-    // XỬ LÝ DUYỆT / TỪ CHỐI ĐƠN XIN NGHỈ (CHỈ ADMIN SERVER)
     if (interaction.customId.startsWith('approve_leave_') || interaction.customId.startsWith('deny_leave_')) {
-        // Kiểm tra quyền Admin Server
         if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
             return interaction.reply({ content: "❌ Chỉ Admin Server mới có quyền duyệt đơn xin nghỉ!", ephemeral: true });
         }
@@ -561,9 +557,20 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// LỆNH TEXT !bxh VÀ !stats
+// LỆNH TEXT (!setup, !bxh, !stats)
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot || !isDbReady) return;
+
+    if (message.content === '!setup' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        await message.delete().catch(() => {});
+        config.boardChannelId = message.channel.id;
+        if (!config.dutyChannelId) config.dutyChannelId = message.channel.id;
+        if (!config.warningChannelId) config.warningChannelId = message.channel.id;
+        if (!config.leaveChannelId) config.leaveChannelId = message.channel.id;
+        saveConfig(); 
+        await updateDutyBoard(message.channel);
+        return message.channel.send("✅ Đã setup bảng chấm công (Dạng Ảnh) tại kênh này!");
+    }
 
     if (message.content === '!bxh') {
         try {
