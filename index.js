@@ -121,21 +121,31 @@ const commands = [
     new SlashCommandBuilder().setName('resetnghi').setDescription('Gỡ trạng thái nghỉ phép cho nhân viên').addUserOption(opt => opt.setName('user').setDescription('Chọn nhân viên').setRequired(true)),
     new SlashCommandBuilder().setName('export').setDescription('Xuất file sao lưu (Gửi qua DM)'),
     new SlashCommandBuilder().setName('import').setDescription('Nhập file sao lưu').addAttachmentOption(opt => opt.setName('file').setDescription('File json').setRequired(true)),
-    // LỆNH SET STATUS MỚI
+    
+    // LỆNH SET STATUS MỚI (CÓ CẢ TRẠNG THÁI ONLINE/OFF)
     new SlashCommandBuilder().setName('setstatus').setDescription('Đổi trạng thái của Bot')
-        .addStringOption(opt => opt.setName('type').setDescription('Chọn loại trạng thái (Playing, Watching, Listening)').setRequired(true).addChoices(
+        .addStringOption(opt => opt.setName('presence').setDescription('Trạng thái hoạt động').setRequired(true).addChoices(
+            { name: 'Online (Trực tuyến)', value: 'online' },
+            { name: 'Idle (Treo máy)', value: 'idle' },
+            { name: 'Do Not Disturb (Không làm phiền)', value: 'dnd' },
+            { name: 'Invisible (Ẩn)', value: 'invisible' }
+        ))
+        .addStringOption(opt => opt.setName('type').setDescription('Loại hoạt động').setRequired(true).addChoices(
             { name: 'Đang Chơi (Playing)', value: 'PLAYING' },
             { name: 'Đang Xem (Watching)', value: 'WATCHING' },
             { name: 'Đang Nghe (Listening)', value: 'LISTENING' }
         ))
-        .addStringOption(opt => opt.setName('text').setDescription('Nhập nội dung trạng thái').setRequired(true))
+        .addStringOption(opt => opt.setName('text').setDescription('Nội dung trạng thái').setRequired(true))
 ].map(command => command.toJSON());
 
 client.once(Events.ClientReady, async () => {
     console.log(`🚀 BOT ĐÃ ONLINE: ${client.user.tag}`);
     
-    // ĐẶT TRẠNG THÁI MẶC ĐỊNH KHI KHỞI ĐỘNG
-    client.user.setActivity('LSPD - GtaNetWork', { type: ActivityType.Watching });
+    // ĐẶT TRẠNG THÁI MẶC ĐỊNH KHI KHỞI ĐỘNG: ONLINE + ĐANG XEM
+    client.user.setPresence({
+        status: 'online',
+        activities: [{ name: 'LSPD - GtaNetWork', type: ActivityType.Watching }]
+    });
 
     loadConfig(); initDatabase();
     try { const rest = new REST({ version: '10' }).setToken(TOKEN); await rest.put(Routes.applicationCommands(client.user.id), { body: commands }); console.log('✅ Đã đăng ký lệnh Slash!'); } catch (error) { console.error('❌ Lỗi đăng ký lệnh:', error); }
@@ -467,6 +477,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         // LỆNH ĐỔI STATUS
         if (commandName === 'setstatus') {
+            const presence = options.getString('presence');
             const type = options.getString('type');
             const text = options.getString('text');
             
@@ -476,8 +487,11 @@ client.on(Events.InteractionCreate, async interaction => {
                 'LISTENING': ActivityType.Listening
             };
 
-            client.user.setActivity(text, { type: activityTypes[type] });
-            return interaction.reply({ content: `✅ Đã đổi trạng thái thành **${type} ${text}**`, ephemeral: true });
+            client.user.setPresence({
+                status: presence,
+                activities: [{ name: text, type: activityTypes[type] }]
+            });
+            return interaction.reply({ content: `✅ Đã đổi trạng thái thành **${presence.toUpperCase()}** | **${type} ${text}**`, ephemeral: true });
         }
     }
 
