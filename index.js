@@ -157,13 +157,17 @@ async function generateBoardImage(guild) {
     return canvas.toBuffer('image/png');
 }
 
-// Hàm cập nhật bảng (Gửi cả Văn bản + Ảnh, tự động xóa cũ)
+// Hàm cập nhật bảng (Chỉ gửi Ảnh, tự động xóa cũ)
 async function updateDutyBoard(channel) {
     if (!isDbReady) return;
     try {
         let buffer = null;
-        try { buffer = await generateBoardImage(channel.guild); } 
-        catch (err) { console.error("Lỗi vẽ ảnh, chỉ gửi văn bản:", err); }
+        try { 
+            buffer = await generateBoardImage(channel.guild); 
+        } catch (err) { 
+            console.error("Lỗi vẽ ảnh:", err); 
+            buffer = null; 
+        }
         
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('onduty_btn').setLabel('On Duty').setStyle(ButtonStyle.Success).setEmoji('🟢'),
@@ -171,28 +175,33 @@ async function updateDutyBoard(channel) {
             new ButtonBuilder().setCustomId('leave_btn').setLabel('Xin Nghỉ').setStyle(ButtonStyle.Secondary).setEmoji('🛌')
         );
 
-        // Xóa bảng cũ
+        // 1. QUÉT VÀ XÓA CÁC TIN NHẮN CŨ CỦA BOT TRONG KÊNH
         const msgs = await channel.messages.fetch({ limit: 50 }); 
         const botMessages = msgs.filter(m => m.author.id === client.user.id);
-        for (const m of botMessages.values()) { await m.delete().catch(() => {}); }
-
-        // Chuẩn bị Văn bản (Embed)
-        const stmt = db.prepare('SELECT * FROM users'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
-        let desc = "```\nMEMBER            STATUS     TOTAL TIME\n---------------------------------------\n";
-        for (let u of users) {
-            u = checkLeaveStatus(u); const m = await channel.guild.members.fetch(u.user_id).catch(() => null); if (!m) continue;
-            let st = u.is_on_leave ? "🛌 ON LEAVE" : (u.is_on_duty ? "🟢 ON DUTY " : "🔴 OFFLINE ");
-            let tm = formatTime(u.total_time); if (u.is_on_duty) tm = formatTime(u.total_time + (Date.now() - u.start_time)) + " (Live)";
-            desc += `${m.displayName.padEnd(18).substring(0, 18)} ${st} ${tm}\n`;
+        for (const m of botMessages.values()) { 
+            await m.delete().catch(() => {}); 
         }
-        desc += "```";
-        const embed = new EmbedBuilder().setTitle("BẢNG CHẤM CÔNG (DUTY LIST)").setDescription(desc).setColor(0x2b2d31).setFooter({ text: `Cập nhật: ${getVNTime()}` });
 
-        // Gửi cả Văn bản và Ảnh
+        // 2. CHỈ GỬI ẢNH
         if (buffer) {
             const attachment = new AttachmentBuilder(buffer, { name: 'dutylist.png' });
-            await channel.send({ content: "**Bảng chấm công vừa được cập nhật:**", embeds: [embed], files: [attachment], components: [row] });
+            await channel.send({ 
+                content: "**Bảng chấm công vừa được cập nhật:**", 
+                files: [attachment], 
+                components: [row] 
+            });
         } else {
+            // Fallback: Nếu lỗi không vẽ được ảnh, gửi văn bản để không bị mất nút
+            const stmt = db.prepare('SELECT * FROM users'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
+            let desc = "```\nMEMBER            STATUS     TOTAL TIME\n---------------------------------------\n";
+            for (let u of users) {
+                u = checkLeaveStatus(u); const m = await channel.guild.members.fetch(u.user_id).catch(() => null); if (!m) continue;
+                let st = u.is_on_leave ? "🛌 ON LEAVE" : (u.is_on_duty ? "🟢 ON DUTY " : "🔴 OFFLINE ");
+                let tm = formatTime(u.total_time); if (u.is_on_duty) tm = formatTime(u.total_time + (Date.now() - u.start_time)) + " (Live)";
+                desc += `${m.displayName.padEnd(18).substring(0, 18)} ${st} ${tm}\n`;
+            }
+            desc += "```";
+            const embed = new EmbedBuilder().setTitle("BẢNG CHẤM CÔNG (DUTY LIST)").setDescription(desc).setColor(0x2b2d31);
             await channel.send({ embeds: [embed], components: [row] });
         }
     } catch (e) { console.error(e); }
@@ -311,7 +320,7 @@ client.on(Events.MessageCreate, async message => {
         if (!config.warningChannelId) config.warningChannelId = message.channel.id;
         if (!config.leaveChannelId) config.leaveChannelId = message.channel.id;
         saveConfig(); await updateDutyBoard(message.channel);
-        return message.channel.send("✅ Đã setup bảng chấm công (Dạng Ảnh + Văn bản) tại kênh này!");
+        return message.channel.send("✅ Đã setup bảng chấm công (Dạng Ảnh) tại kênh này!");
     }
 
     if (message.content === '!bxh') {
