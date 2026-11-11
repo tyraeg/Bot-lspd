@@ -98,7 +98,7 @@ client.once(Events.ClientReady, async () => {
 });
 
 // ==========================================
-// CÁC HÀM VẼ ẢNH (CANVAS)
+// CÁC HÀM VẼ ẢNH (ĐÃ XÓA ICON, CHỮ TO RÕ HƠN)
 // ==========================================
 
 // 1. Vẽ Bảng Chấm Công
@@ -106,20 +106,25 @@ async function generateBoardImage(guild) {
     const stmt = db.prepare('SELECT * FROM users'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
     const activeUsers = users.filter(u => u.total_time > 0 || u.is_on_duty === 1 || u.is_on_leave === 1);
     
-    const rowHeight = 60, headerHeight = 120, padding = 20, width = 800;
+    const rowHeight = 65, headerHeight = 130, padding = 20, width = 800;
     const height = headerHeight + (activeUsers.length * rowHeight) + padding;
     
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
-    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 80);
-    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 30px sans-serif'; ctx.fillText('BẢNG CHẤM CÔNG', padding, 45);
-    ctx.font = '14px sans-serif'; ctx.fillStyle = '#b5bac1'; ctx.fillText(`Cập nhật: ${getVNTime()}`, padding, 70);
+    
+    // Header
+    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 85);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('BẢNG CHẤM CÔNG', padding, 50);
+    ctx.font = '16px sans-serif'; ctx.fillStyle = '#b5bac1'; ctx.fillText(`Cập nhật: ${getVNTime()}`, padding, 75);
 
-    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 80, width, 40);
-    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 16px sans-serif';
-    ctx.fillText('TÊN NHÂN VIÊN', 80, 105); ctx.fillText('TRẠNG THÁI', 450, 105); ctx.fillText('THỜI GIAN', 700, 105);
+    // Tiêu đề cột
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 85, width, 45);
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 18px sans-serif';
+    ctx.fillText('TÊN NHÂN VIÊN', 90, 115); 
+    ctx.fillText('TRẠNG THÁI', 450, 115); 
+    ctx.fillText('THỜI GIAN', 680, 115);
 
     let y = headerHeight;
     for (let i = 0; i < activeUsers.length; i++) {
@@ -128,24 +133,33 @@ async function generateBoardImage(guild) {
         const name = member ? member.displayName : "Unknown";
         
         if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
+        
+        // Avatar
         try {
             const avatarURL = member ? member.user.displayAvatarURL({ extension: 'png', size: 64 }) : null;
             if (avatarURL) {
                 const avatar = await loadImage(avatarURL);
-                ctx.save(); ctx.beginPath(); ctx.arc(padding + 20, y + 30, 20, 0, Math.PI * 2, true); ctx.closePath(); ctx.clip();
-                ctx.drawImage(avatar, padding, y + 10, 40, 40); ctx.restore();
+                ctx.save(); ctx.beginPath(); ctx.arc(padding + 25, y + 32, 22, 0, Math.PI * 2, true); ctx.closePath(); ctx.clip();
+                ctx.drawImage(avatar, padding + 3, y + 10, 44, 44); ctx.restore();
             }
         } catch (e) {}
 
-        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(name.substring(0, 20), 80, y + 35);
+        // Tên
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; 
+        ctx.fillText(name.substring(0, 20), 90, y + 40);
 
+        // Trạng thái (Không dùng icon, chỉ dùng chữ và màu)
         let statusText = "OFFLINE", statusColor = "#ed4245";
         if (u.is_on_leave) { statusText = "ON LEAVE"; statusColor = "#fee75c"; }
         else if (u.is_on_duty) { statusText = "ON DUTY"; statusColor = "#57f287"; }
-        ctx.fillStyle = statusColor; ctx.font = 'bold 16px sans-serif'; ctx.fillText(statusText, 450, y + 35);
+        ctx.fillStyle = statusColor; ctx.font = 'bold 18px sans-serif'; 
+        ctx.fillText(statusText, 450, y + 40);
 
+        // Thời gian
         let time = u.total_time; if (u.is_on_duty) time += (Date.now() - u.start_time);
-        ctx.fillStyle = '#dbdee1'; ctx.font = '18px sans-serif'; ctx.fillText(formatTime(time), 700, y + 35);
+        ctx.fillStyle = '#dbdee1'; ctx.font = '20px sans-serif'; 
+        ctx.fillText(formatTime(time), 680, y + 40);
+        
         y += rowHeight;
     }
     return canvas.toBuffer('image/png');
@@ -156,7 +170,7 @@ async function generateBXHImage(guild) {
     const stmt = db.prepare('SELECT * FROM users ORDER BY total_time DESC LIMIT 10'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
     if (users.length === 0) return null;
 
-    const rowHeight = 70, headerHeight = 80, padding = 20, width = 800;
+    const rowHeight = 75, headerHeight = 90, padding = 20, width = 800;
     const height = headerHeight + (users.length * rowHeight) + padding;
     
     const canvas = createCanvas(width, height);
@@ -164,7 +178,7 @@ async function generateBXHImage(guild) {
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, headerHeight);
-    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('BẢNG XẾP HẠNG CHĂM CHỈ', padding, 50);
+    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('BẢNG XẾP HẠNG', padding, 60);
 
     let y = headerHeight;
     for (let i = 0; i < users.length; i++) {
@@ -174,33 +188,33 @@ async function generateBXHImage(guild) {
         
         if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
 
-        // Huy chương
-        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 24px sans-serif';
-        let rankText = (i === 0) ? '🥇' : (i === 1) ? '🥈' : (i === 2) ? '🥉' : `#${i + 1}`;
-        ctx.fillText(rankText, padding, y + 45);
+        // Hạng (Không dùng icon, chỉ dùng số)
+        ctx.fillStyle = i === 0 ? '#FFD700' : i === 1 ? '#C0C0C0' : i === 2 ? '#CD7F32' : '#ffffff'; 
+        ctx.font = 'bold 26px sans-serif';
+        ctx.fillText(`TOP ${i + 1}`, padding, y + 48);
 
         // Avatar
         try {
             const avatarURL = member ? member.user.displayAvatarURL({ extension: 'png', size: 64 }) : null;
             if (avatarURL) {
                 const avatar = await loadImage(avatarURL);
-                ctx.save(); ctx.beginPath(); ctx.arc(padding + 80, y + 35, 20, 0, Math.PI * 2, true); ctx.closePath(); ctx.clip();
-                ctx.drawImage(avatar, padding + 60, y + 15, 40, 40); ctx.restore();
+                ctx.save(); ctx.beginPath(); ctx.arc(padding + 120, y + 37, 22, 0, Math.PI * 2, true); ctx.closePath(); ctx.clip();
+                ctx.drawImage(avatar, padding + 98, y + 15, 44, 44); ctx.restore();
             }
         } catch (e) {}
 
         // Tên
-        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; 
-        ctx.fillText(name.substring(0, 20), padding + 130, y + 42);
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 22px sans-serif'; 
+        ctx.fillText(name.substring(0, 20), padding + 160, y + 45);
 
         // Thời gian
         let time = u.total_time; if (u.is_on_duty) time += (Date.now() - u.start_time);
-        ctx.fillStyle = '#57f287'; ctx.font = 'bold 20px sans-serif'; 
-        ctx.fillText(`⏱️ ${formatTime(time)}`, 500, y + 42);
+        ctx.fillStyle = '#57f287'; ctx.font = 'bold 22px sans-serif'; 
+        ctx.fillText(formatTime(time), 500, y + 45);
 
         // Số ngày
-        ctx.fillStyle = '#dbdee1'; ctx.font = '18px sans-serif'; 
-        ctx.fillText(`📅 ${u.total_days} ngày`, 660, y + 42);
+        ctx.fillStyle = '#dbdee1'; ctx.font = '20px sans-serif'; 
+        ctx.fillText(`${u.total_days} Ngày`, 660, y + 45);
 
         y += rowHeight;
     }
@@ -220,7 +234,7 @@ async function generateStatsImage(guild) {
         if (u.is_on_duty) { oC++; tT += (u.total_time + (Date.now() - u.start_time)); } else tT += u.total_time;
     }
 
-    const rowHeight = 60, headerHeight = 250, padding = 20, width = 800;
+    const rowHeight = 65, headerHeight = 260, padding = 20, width = 800;
     const height = headerHeight + (activeUsers.length * rowHeight) + padding;
     
     const canvas = createCanvas(width, height);
@@ -228,18 +242,24 @@ async function generateStatsImage(guild) {
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 120);
-    ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('THỐNG KÊ CHI TIẾT SERVER', padding, 55);
+    ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('THỐNG KÊ SERVER', padding, 60);
     
     // Thông số tổng quan
-    ctx.fillStyle = '#ffffff'; ctx.font = '18px sans-serif';
-    ctx.fillText(`👥 Tổng nhân sự: ${tM}  |  🟢 Đang Online: ${oC}`, padding, 95);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 22px sans-serif';
+    ctx.fillText(`Tổng nhân sự: ${tM}   |   Đang Online: ${oC}`, padding, 100);
     
     // Tiêu đề cột
-    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 130, width, 120);
-    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 16px sans-serif';
-    ctx.fillText('📅 Tổng ngày trực:', padding, 160); ctx.fillText(`${tD} ngày`, 250, 160);
-    ctx.fillText('⏱️ Tổng thời gian:', padding, 190); ctx.fillText(`${formatTime(tT)}`, 250, 190);
-    ctx.fillText('Danh sách nhân viên:', padding, 230);
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 130, width, 130);
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('Tổng ngày trực:', padding, 165); 
+    ctx.fillStyle = '#dbdee1'; ctx.fillText(`${tD} ngày`, 250, 165);
+    
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('Tổng thời gian:', padding, 200); 
+    ctx.fillStyle = '#dbdee1'; ctx.fillText(`${formatTime(tT)}`, 250, 200);
+
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('Danh sách nhân sự:', padding, 240);
 
     let y = headerHeight;
     for (let i = 0; i < activeUsers.length; i++) {
@@ -249,16 +269,23 @@ async function generateStatsImage(guild) {
         
         if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
 
-        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(name.substring(0, 20), 80, y + 35);
+        // Tên
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; 
+        ctx.fillText(name.substring(0, 20), 80, y + 40);
 
+        // Trạng thái
         let statusText = "OFFLINE", statusColor = "#ed4245";
         if (u.is_on_leave) { statusText = "ON LEAVE"; statusColor = "#fee75c"; }
         else if (u.is_on_duty) { statusText = "ON DUTY"; statusColor = "#57f287"; }
-        ctx.fillStyle = statusColor; ctx.font = 'bold 16px sans-serif'; ctx.fillText(statusText, 400, y + 35);
+        ctx.fillStyle = statusColor; ctx.font = 'bold 18px sans-serif'; 
+        ctx.fillText(statusText, 400, y + 40);
 
+        // Thời gian
         let time = u.total_time; let extraStr = "";
         if (u.is_on_duty) { const sess = Date.now() - u.start_time; time += sess; extraStr = ` (+${formatTime(sess)})`; }
-        ctx.fillStyle = '#dbdee1'; ctx.font = '18px sans-serif'; ctx.fillText(`${formatTime(time)}${extraStr}`, 550, y + 35);
+        ctx.fillStyle = '#dbdee1'; ctx.font = '20px sans-serif'; 
+        ctx.fillText(`${formatTime(time)}${extraStr}`, 550, y + 40);
+        
         y += rowHeight;
     }
     return canvas.toBuffer('image/png');
@@ -274,9 +301,9 @@ async function updateDutyBoard(channel) {
         try { buffer = await generateBoardImage(channel.guild); } catch (err) { console.error("Lỗi vẽ bảng:", err); }
         
         const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('onduty_btn').setLabel('On Duty').setStyle(ButtonStyle.Success).setEmoji('🟢'),
-            new ButtonBuilder().setCustomId('offduty_btn').setLabel('Off Duty').setStyle(ButtonStyle.Danger).setEmoji('🔴'),
-            new ButtonBuilder().setCustomId('leave_btn').setLabel('Xin Nghỉ').setStyle(ButtonStyle.Secondary).setEmoji('🛌')
+            new ButtonBuilder().setCustomId('onduty_btn').setLabel('On Duty').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('offduty_btn').setLabel('Off Duty').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId('leave_btn').setLabel('Xin Nghỉ').setStyle(ButtonStyle.Secondary)
         );
 
         const msgs = await channel.messages.fetch({ limit: 50 }); 
@@ -296,7 +323,7 @@ async function updateDutyBoard(channel) {
             let desc = "```\nMEMBER            STATUS     TOTAL TIME\n---------------------------------------\n";
             for (let u of users) {
                 u = checkLeaveStatus(u); const m = await channel.guild.members.fetch(u.user_id).catch(() => null); if (!m) continue;
-                let st = u.is_on_leave ? "🛌 ON LEAVE" : (u.is_on_duty ? "🟢 ON DUTY " : "🔴 OFFLINE ");
+                let st = u.is_on_leave ? "ON LEAVE" : (u.is_on_duty ? "ON DUTY " : "OFFLINE ");
                 let tm = formatTime(u.total_time); if (u.is_on_duty) tm = formatTime(u.total_time + (Date.now() - u.start_time)) + " (Live)";
                 desc += `${m.displayName.padEnd(18).substring(0, 18)} ${st} ${tm}\n`;
             }
@@ -390,7 +417,7 @@ client.on(Events.InteractionCreate, async interaction => {
         await interaction.reply({ content: `Bắt đầu ca trực lúc ${getVNTime()}.`, ephemeral: true });
         if (logDutyChannel) {
             const now = new Date(); const timeStr = now.toLocaleTimeString('vi-VN', { hour12: false, timeZone: 'Asia/Ho_Chi_Minh' }); const footerTime = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' });
-            const embed = new EmbedBuilder().setTitle('🟢 Bắt đầu ca trực').setDescription(`**Thành viên:** <@${interaction.user.id}>\n**Thời gian:** ${timeStr}\n**Voice Channel:** ${voiceChannel.name}`).setColor(0x00FF00).setFooter({ text: `Hôm nay lúc ${footerTime}` }); 
+            const embed = new EmbedBuilder().setTitle('Bắt đầu ca trực').setDescription(`**Thành viên:** <@${interaction.user.id}>\n**Thời gian:** ${timeStr}\n**Voice Channel:** ${voiceChannel.name}`).setColor(0x00FF00).setFooter({ text: `Hôm nay lúc ${footerTime}` }); 
             await logDutyChannel.send({ embeds: [embed] });
         }
         updateDutyBoard(interaction.channel);
@@ -401,7 +428,7 @@ client.on(Events.InteractionCreate, async interaction => {
         await interaction.reply({ content: `Đã kết thúc ca. Ca này: **${formatTime(sessionTime)}**`, ephemeral: true });
         if (logDutyChannel) {
             const now = new Date(); const timeStr = now.toLocaleTimeString('vi-VN', { hour12: false, timeZone: 'Asia/Ho_Chi_Minh' }); const footerTime = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' });
-            const embed = new EmbedBuilder().setTitle('🔴 Kết thúc ca trực').setDescription(`**Thành viên:** <@${interaction.user.id}>\n**Thời gian ca này:** ${formatTime(sessionTime)}\n**Tổng thời gian:** ${formatTime(newTotal)}\n**Thời điểm:** ${timeStr}`).setColor(0xFF0000).setFooter({ text: `Hôm nay lúc ${footerTime}` });
+            const embed = new EmbedBuilder().setTitle('Kết thúc ca trực').setDescription(`**Thành viên:** <@${interaction.user.id}>\n**Thời gian ca này:** ${formatTime(sessionTime)}\n**Tổng thời gian:** ${formatTime(newTotal)}\n**Thời điểm:** ${timeStr}`).setColor(0xFF0000).setFooter({ text: `Hôm nay lúc ${footerTime}` });
             await logDutyChannel.send({ embeds: [embed] });
         }
         updateDutyBoard(interaction.channel);
@@ -418,7 +445,7 @@ client.on(Events.MessageCreate, async message => {
         if (!config.warningChannelId) config.warningChannelId = message.channel.id;
         if (!config.leaveChannelId) config.leaveChannelId = message.channel.id;
         saveConfig(); await updateDutyBoard(message.channel);
-        return message.channel.send("✅ Đã setup bảng chấm công (Dạng Ảnh) tại kênh này!");
+        return message.channel.send("✅ Đã setup bảng chấm công tại kênh này!");
     }
 
     // LỆNH BXH BẰNG ẢNH
@@ -449,7 +476,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
         const sT = Date.now() - user.start_time;
         db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = total_time + ? WHERE user_id = ?', [sT, oldState.id]); saveDatabase();
         const wC = config.warningChannelId ? client.channels.cache.get(config.warningChannelId) : client.channels.cache.get(config.boardChannelId);
-        if (wC) { const warnEmbed = new EmbedBuilder().setTitle('⚠️ CẢNH BÁO RỚT MẠNG').setDescription(`**Nhân viên:** <@${oldState.id}>\n**Lý do:** Tự động rời Voice Channel khi đang On Duty.\n**Thời gian ca này:** ${formatTime(sT)}`).setColor(0xFFA500).setTimestamp(); wC.send({ embeds: [warnEmbed] }); }
+        if (wC) { const warnEmbed = new EmbedBuilder().setTitle('CẢNH BÁO RỚT MẠNG').setDescription(`**Nhân viên:** <@${oldState.id}>\n**Lý do:** Tự động rời Voice Channel khi đang On Duty.\n**Thời gian ca này:** ${formatTime(sT)}`).setColor(0xFFA500).setTimestamp(); wC.send({ embeds: [warnEmbed] }); }
     }
 });
 
@@ -463,7 +490,7 @@ setInterval(() => {
         u = checkLeaveStatus(u); if (!u.schedule_start || !u.schedule_end) continue;
         const sM = timeToMinutes(u.schedule_start), eM = timeToMinutes(u.schedule_end);
         if (cM >= sM && cM <= eM && u.is_on_duty === 0 && u.has_warned_schedule === 0 && u.is_on_leave === 0) {
-            if (wC) { const warnEmbed = new EmbedBuilder().setTitle('🚨 CẢNH BÁO TRỄ CA TRỰC').setDescription(`**Nhân viên:** <@${u.user_id}>\n**Lịch trực:** Từ **${u.schedule_start}** đến **${u.schedule_end}**\n**Lý do:** Đã đến giờ nhưng chưa bấm nút **On Duty**!`).setColor(0xFFA500).setTimestamp(); wC.send({ embeds: [warnEmbed] }); }
+            if (wC) { const warnEmbed = new EmbedBuilder().setTitle('CẢNH BÁO TRỄ CA TRỰC').setDescription(`**Nhân viên:** <@${u.user_id}>\n**Lịch trực:** Từ **${u.schedule_start}** đến **${u.schedule_end}**\n**Lý do:** Đã đến giờ nhưng chưa bấm nút **On Duty**!`).setColor(0xFFA500).setTimestamp(); wC.send({ embeds: [warnEmbed] }); }
             db.run('UPDATE users SET has_warned_schedule = 1 WHERE user_id = ?', [u.user_id]); saveDatabase();
         }
         if (cM > eM && u.has_warned_schedule === 1) { db.run('UPDATE users SET has_warned_schedule = 0 WHERE user_id = ?', [u.user_id]); saveDatabase(); }
