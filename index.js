@@ -1,4 +1,5 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, PermissionFlagsBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, PermissionFlagsBits, REST, Routes, SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
+const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const initSqlJs = require('sql.js');
 const fs = require('fs');
 const express = require('express');
@@ -7,18 +8,13 @@ const https = require('https');
 const TOKEN = process.env.TOKEN;
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 
-// --- QUẢN LÝ CẤU HÌNH KÊNH ---
 let config = { dutyChannelId: null, warningChannelId: null, leaveChannelId: null, boardChannelId: null };
-
-function loadConfig() {
-    if (fs.existsSync('config.json')) { try { config = JSON.parse(fs.readFileSync('config.json', 'utf8')); } catch (e) {} }
-}
+function loadConfig() { if (fs.existsSync('config.json')) { try { config = JSON.parse(fs.readFileSync('config.json', 'utf8')); } catch (e) {} } }
 function saveConfig() { fs.writeFileSync('config.json', JSON.stringify(config, null, 2)); }
 
 let db;
 let isDbReady = false;
 
-// --- KHỞI TẠO DATABASE ---
 async function initDatabase() {
     try {
         const SQL = await initSqlJs();
@@ -48,60 +44,40 @@ async function initDatabase() {
 }
 
 function saveDatabase() { if (db) { try { fs.writeFileSync('duty.db', Buffer.from(db.export())); } catch (e) {} } }
-
 function checkAndAddDay(userId) {
     if (!isDbReady) return;
     const today = new Date().toISOString().split('T')[0];
     const stmt = db.prepare('SELECT * FROM history WHERE user_id = ? AND date = ?');
     stmt.bind([userId, today]);
-    if (!stmt.step()) {
-        db.run('INSERT INTO history (user_id, date) VALUES (?, ?)', [userId, today]);
-        db.run('UPDATE users SET total_days = total_days + 1 WHERE user_id = ?', [userId]);
-        saveDatabase();
-    }
+    if (!stmt.step()) { db.run('INSERT INTO history (user_id, date) VALUES (?, ?)', [userId, today]); db.run('UPDATE users SET total_days = total_days + 1 WHERE user_id = ?', [userId]); saveDatabase(); }
     stmt.free();
 }
-
 function checkLeaveStatus(user) {
     if (user.is_on_leave === 1 && user.leave_date) {
         const today = new Date().toISOString().split('T')[0];
-        if (today > user.leave_date) {
-            db.run('UPDATE users SET is_on_leave = 0, leave_date = NULL WHERE user_id = ?', [user.user_id]);
-            saveDatabase(); user.is_on_leave = 0; 
-        }
+        if (today > user.leave_date) { db.run('UPDATE users SET is_on_leave = 0, leave_date = NULL WHERE user_id = ?', [user.user_id]); saveDatabase(); user.is_on_leave = 0; }
     }
     return user;
 }
-
 const getOrCreateUser = (userId) => {
     if (!isDbReady) return { user_id: userId, is_on_duty: 0, start_time: 0, total_time: 0, total_days: 0, is_on_leave: 0, leave_date: null };
     const stmt = db.prepare('SELECT * FROM users WHERE user_id = ?'); stmt.bind([userId]);
     let user = null; if (stmt.step()) user = stmt.getAsObject(); stmt.free();
-    if (!user) {
-        db.run('INSERT INTO users (user_id) VALUES (?)', [userId]); saveDatabase();
-        user = { user_id: userId, is_on_duty: 0, start_time: 0, total_time: 0, total_days: 0, is_on_leave: 0, leave_date: null };
-    } else { user = checkLeaveStatus(user); }
+    if (!user) { db.run('INSERT INTO users (user_id) VALUES (?)', [userId]); saveDatabase(); user = { user_id: userId, is_on_duty: 0, start_time: 0, total_time: 0, total_days: 0, is_on_leave: 0, leave_date: null }; } else { user = checkLeaveStatus(user); }
     return user;
 };
-
 const formatTime = (ms) => {
-    if (!ms || ms < 1000) return "0 Giây";
+    if (!ms || ms < 1000) return "0s";
     const totalSeconds = Math.floor(ms / 1000);
-    if (totalSeconds < 60) return `${totalSeconds} Giây`;
+    if (totalSeconds < 60) return `${totalSeconds}s`;
     const totalMinutes = Math.floor(totalSeconds / 60);
-    if (totalMinutes < 60) return `${totalMinutes} Phút`;
-    return `${Math.floor(totalMinutes / 60)} Giờ`;
+    if (totalMinutes < 60) return `${totalMinutes}m`;
+    return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
 };
-
 const timeToMinutes = (timeStr) => { const [h, m] = timeStr.split(':').map(Number); return h * 60 + m; };
 const getVNTime = () => new Date().toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" });
 
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildVoiceStates,
-        GatewayIntentBits.GuildMembers, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages
-    ]
-});
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMembers, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages] });
 
 const commands = [
     new SlashCommandBuilder().setName('settime').setDescription('Cài đặt lịch trực').addUserOption(opt => opt.setName('user').setDescription('Chọn nhân viên').setRequired(true)).addStringOption(opt => opt.setName('start').setDescription('Giờ bắt đầu (VD: 14:00)').setRequired(true)).addStringOption(opt => opt.setName('end').setDescription('Giờ kết thúc (VD: 15:30)').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -116,44 +92,112 @@ const commands = [
 
 client.once(Events.ClientReady, async () => {
     console.log(`🚀 BOT ĐÃ ONLINE: ${client.user.tag}`);
-    loadConfig();
-    initDatabase();
-
-    try {
-        const rest = new REST({ version: '10' }).setToken(TOKEN);
-        await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ Đã đăng ký lệnh Slash!');
-    } catch (error) { console.error('❌ Lỗi đăng ký lệnh:', error); }
+    loadConfig(); initDatabase();
+    try { const rest = new REST({ version: '10' }).setToken(TOKEN); await rest.put(Routes.applicationCommands(client.user.id), { body: commands }); console.log('✅ Đã đăng ký lệnh Slash!'); } catch (error) { console.error('❌ Lỗi đăng ký lệnh:', error); }
 });
 
-// --- HÀM TẠO BẢNG CHẤM CÔNG (VĂN BẢN) ---
+// ==========================================
+// TÍNH NĂNG VẼ ẢNH BẢNG CHẤM CÔNG
+// ==========================================
+async function generateBoardImage(guild) {
+    const stmt = db.prepare('SELECT * FROM users'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
+    const activeUsers = users.filter(u => u.total_time > 0 || u.is_on_duty === 1 || u.is_on_leave === 1);
+    
+    const rowHeight = 60, headerHeight = 100, padding = 20, width = 800;
+    const height = headerHeight + (activeUsers.length * rowHeight) + padding;
+    
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+
+    // Nền
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
+
+    // Header
+    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, headerHeight);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 32px sans-serif';
+    ctx.fillText('BẢNG CHẤM CÔNG', padding, 50);
+    ctx.font = '16px sans-serif'; ctx.fillStyle = '#b5bac1';
+    ctx.fillText(`Cập nhật: ${getVNTime()}`, padding, 80);
+
+    // Danh sách
+    let y = headerHeight;
+    for (let i = 0; i < activeUsers.length; i++) {
+        let u = checkLeaveStatus(activeUsers[i]);
+        const member = await guild.members.fetch(u.user_id).catch(() => null);
+        const name = member ? member.displayName : "Unknown";
+        
+        if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
+
+        try {
+            const avatarURL = member ? member.user.displayAvatarURL({ extension: 'png', size: 64 }) : null;
+            if (avatarURL) {
+                const avatar = await loadImage(avatarURL);
+                ctx.save(); ctx.beginPath(); ctx.arc(padding + 20, y + 30, 20, 0, Math.PI * 2, true); ctx.closePath(); ctx.clip();
+                ctx.drawImage(avatar, padding, y + 10, 40, 40); ctx.restore();
+            }
+        } catch (e) {}
+
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(name.substring(0, 20), padding + 60, y + 35);
+
+        let statusText = "OFFLINE", statusColor = "#ed4245";
+        if (u.is_on_leave) { statusText = "ON LEAVE"; statusColor = "#fee75c"; }
+        else if (u.is_on_duty) { statusText = "ON DUTY"; statusColor = "#57f287"; }
+        ctx.fillStyle = statusColor; ctx.font = 'bold 16px sans-serif'; ctx.fillText(statusText, width - 350, y + 35);
+
+        let time = u.total_time; if (u.is_on_duty) time += (Date.now() - u.start_time);
+        ctx.fillStyle = '#dbdee1'; ctx.font = '18px sans-serif'; ctx.fillText(formatTime(time), width - 180, y + 35);
+        y += rowHeight;
+    }
+    return canvas.toBuffer('image/png');
+}
+
+// Hàm cập nhật bảng (Có Fallback nếu vẽ ảnh lỗi)
 async function updateDutyBoard(channel) {
     if (!isDbReady) return;
     try {
-        const stmt = db.prepare('SELECT * FROM users'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
-        let desc = "```\nMEMBER            STATUS     TOTAL TIME\n---------------------------------------\n";
-        for (let u of users) {
-            u = checkLeaveStatus(u); const m = await channel.guild.members.fetch(u.user_id).catch(() => null); if (!m) continue;
-            let st = u.is_on_leave ? "🛌 ON LEAVE" : (u.is_on_duty ? "🟢 ON DUTY " : "🔴 OFFLINE ");
-            let tm = formatTime(u.total_time); if (u.is_on_duty) tm = formatTime(u.total_time + (Date.now() - u.start_time)) + " (Live)";
-            desc += `${m.displayName.padEnd(18).substring(0, 18)} ${st} ${tm}\n`;
+        let buffer;
+        try {
+            buffer = await generateBoardImage(channel.guild);
+        } catch (err) {
+            console.error("Lỗi vẽ ảnh, chuyển sang gửi chữ:", err);
+            buffer = null; // Kích hoạt Fallback
         }
-        desc += "```";
-        const embed = new EmbedBuilder().setTitle("BẢNG CHẤM CÔNG (DUTY LIST)").setDescription(desc).setColor(0x2b2d31).setFooter({ text: `Cập nhật: ${getVNTime()}` });
+        
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('onduty_btn').setLabel('On Duty').setStyle(ButtonStyle.Success).setEmoji('🟢'),
             new ButtonBuilder().setCustomId('offduty_btn').setLabel('Off Duty').setStyle(ButtonStyle.Danger).setEmoji('🔴'),
             new ButtonBuilder().setCustomId('leave_btn').setLabel('Xin Nghỉ').setStyle(ButtonStyle.Secondary).setEmoji('🛌')
         );
-        const msgs = await channel.messages.fetch({ limit: 10 }); const bM = msgs.find(x => x.author.id === client.user.id && x.embeds.length > 0 && x.components.length > 0);
-        if (bM) await bM.edit({ embeds: [embed], components: [row] }); else await channel.send({ embeds: [embed], components: [row] });
-    } catch (e) {}
+
+        const msgs = await channel.messages.fetch({ limit: 10 }); 
+        const bM = msgs.find(x => x.author.id === client.user.id && (x.attachments.size > 0 || x.embeds.length > 0));
+
+        if (buffer) {
+            const attachment = new AttachmentBuilder(buffer, { name: 'dutylist.png' });
+            if (bM) await bM.edit({ files: [attachment], embeds: [], components: [row] });
+            else await channel.send({ files: [attachment], components: [row] });
+        } else {
+            // FALLBACK VĂN BẢN (Nếu vẽ ảnh lỗi)
+            const stmt = db.prepare('SELECT * FROM users'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
+            let desc = "```\nMEMBER            STATUS     TOTAL TIME\n---------------------------------------\n";
+            for (let u of users) {
+                u = checkLeaveStatus(u); const m = await channel.guild.members.fetch(u.user_id).catch(() => null); if (!m) continue;
+                let st = u.is_on_leave ? "🛌 ON LEAVE" : (u.is_on_duty ? "🟢 ON DUTY " : "🔴 OFFLINE ");
+                let tm = formatTime(u.total_time); if (u.is_on_duty) tm = formatTime(u.total_time + (Date.now() - u.start_time)) + " (Live)";
+                desc += `${m.displayName.padEnd(18).substring(0, 18)} ${st} ${tm}\n`;
+            }
+            desc += "```";
+            const embed = new EmbedBuilder().setTitle("BẢNG CHẤM CÔNG (DUTY LIST)").setDescription(desc).setColor(0x2b2d31).setFooter({ text: `Cập nhật: ${getVNTime()}` });
+            if (bM) await bM.edit({ files: [], embeds: [embed], components: [row] });
+            else await channel.send({ embeds: [embed], components: [row] });
+        }
+    } catch (e) { console.error(e); }
 }
 
-// --- XỬ LÝ SLASH VÀ NÚT BẤM ---
+// --- XỬ LÝ TƯƠNG TÁC ---
 client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isChatInputCommand()) {
-        if (!isDbReady) return interaction.reply({ content: "Hệ thống đang khởi động!", ephemeral: true });
+        if (!isDbReady) return interaction.reply({ content: "Đang khởi động!", ephemeral: true });
         const { commandName, options, channel } = interaction;
 
         if (commandName === 'settime') {
@@ -184,9 +228,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     try {
                         const backup = JSON.parse(data);
                         db.run('DELETE FROM users'); db.run('DELETE FROM history');
-                        for (const u of backup.users) {
-                            db.run(`INSERT INTO users (user_id, is_on_duty, start_time, total_time, total_days, is_on_leave, leave_date, schedule_start, schedule_end, has_warned_schedule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [u.user_id, u.is_on_duty, u.start_time, u.total_time, u.total_days, u.is_on_leave, u.leave_date, u.schedule_start, u.schedule_end, u.has_warned_schedule]);
-                        }
+                        for (const u of backup.users) { db.run(`INSERT INTO users (user_id, is_on_duty, start_time, total_time, total_days, is_on_leave, leave_date, schedule_start, schedule_end, has_warned_schedule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [u.user_id, u.is_on_duty, u.start_time, u.total_time, u.total_days, u.is_on_leave, u.leave_date, u.schedule_start, u.schedule_end, u.has_warned_schedule]); }
                         for (const h of backup.history) db.run(`INSERT INTO history (user_id, date) VALUES (?, ?)`, [h.user_id, h.date]);
                         saveDatabase(); if (config.boardChannelId) updateDutyBoard(client.channels.cache.get(config.boardChannelId));
                         interaction.editReply(`✅ **NHẬP DỮ LIỆU THÀNH CÔNG!**`);
@@ -265,7 +307,7 @@ client.on(Events.MessageCreate, async message => {
         if (!config.warningChannelId) config.warningChannelId = message.channel.id;
         if (!config.leaveChannelId) config.leaveChannelId = message.channel.id;
         saveConfig(); await updateDutyBoard(message.channel);
-        return message.channel.send("✅ Đã setup bảng chấm công tại kênh này!");
+        return message.channel.send("✅ Đã setup bảng chấm công (Dạng Ảnh) tại kênh này!");
     }
 
     if (message.content === '!bxh') {
