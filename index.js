@@ -375,7 +375,7 @@ async function updateDutyBoard(channel) {
                 desc += `${m.displayName.padEnd(18).substring(0, 18)} ${st} ${tm}\n`;
             }
             desc += "```";
-            const embed = new EmbedBuilder().setTitle("BẢNG CHẤM CÔNG (DUTY LIST)").setDescription(desc).setColor(0x2b2d31);
+            const embed = new EmbedBuilder().setTitle("Danh Sách LSPD GtaNetWork").setDescription(desc).setColor(0x2b2d31);
             await channel.send({ content: timeText, embeds: [embed], components: [row] });
         }
     } catch (e) { console.error(e); }
@@ -498,10 +498,10 @@ client.on(Events.InteractionCreate, async interaction => {
         if (isApprove) {
             const today = new Date().toISOString().split('T')[0]; 
             db.run('UPDATE users SET is_on_leave = 1, leave_date = ? WHERE user_id = ?', [today, targetId]); saveDatabase();
-            try { const u = await client.users.fetch(targetId); await u.send(`✅ **THÔNG BÁO:** Đơn xin nghỉ phép của bạn đã được Admin **${interaction.user.username}** phê duyệt.`); } catch (e) {}
+            try { const u = await client.users.fetch(targetId); await u.send(`✅ **THÔNG BÁO:** Đơn xin nghỉ phép của bạn đã được Chief Of Police **${interaction.user.username}** phê duyệt.`); } catch (e) {}
             return interaction.update({ content: `✅ **${interaction.user.username}** đã duyệt đơn xin nghỉ cho <@${targetId}>.`, embeds: [], components: [] });
         } else {
-            try { const u = await client.users.fetch(targetId); await u.send(`❌ **THÔNG BÁO:** Đơn xin nghỉ phép của bạn đã bị Admin **${interaction.user.username}** từ chối.`); } catch (e) {}
+            try { const u = await client.users.fetch(targetId); await u.send(`❌ **THÔNG BÁO:** Đơn xin nghỉ phép của bạn đã bị Chief Of Police **${interaction.user.username}** từ chối.`); } catch (e) {}
             return interaction.update({ content: `❌ **${interaction.user.username}** đã từ chối đơn xin nghỉ của <@${targetId}>.`, embeds: [], components: [] });
         }
     }
@@ -569,7 +569,7 @@ client.on(Events.MessageCreate, async message => {
         if (!config.leaveChannelId) config.leaveChannelId = message.channel.id;
         saveConfig(); 
         await updateDutyBoard(message.channel);
-        return message.channel.send("✅ Đã setup bảng chấm công (Dạng Ảnh) tại kênh này!");
+        return message.channel.send("✅ Đã setup tại kênh này!");
     }
 
     if (message.content === '!bxh') {
