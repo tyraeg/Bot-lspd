@@ -37,7 +37,12 @@ async function initDatabase() {
         try { db.run('ALTER TABLE users ADD COLUMN schedule_start TEXT DEFAULT NULL'); } catch (e) {}
         try { db.run('ALTER TABLE users ADD COLUMN schedule_end TEXT DEFAULT NULL'); } catch (e) {}
         try { db.run('ALTER TABLE users ADD COLUMN has_warned_schedule INTEGER DEFAULT 0'); } catch (e) {}
-        try { db.run(`CREATE TABLE IF NOT EXISTS history (user_id TEXT, date TEXT, PRIMARY KEY (user_id, date))`); } catch (e) {}
+        
+        // Bảng lịch sử tuần (Lưu thời gian trực của tuần hiện tại)
+        db.run(`CREATE TABLE IF NOT EXISTS weekly_history (
+            user_id TEXT, week_id TEXT, week_time INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, week_id)
+        )`);
         
         saveDatabase(); isDbReady = true;
         console.log("✅ Database đã sẵn sàng!");
@@ -45,6 +50,17 @@ async function initDatabase() {
 }
 
 function saveDatabase() { if (db) { try { fs.writeFileSync('duty.db', Buffer.from(db.export())); } catch (e) {} } }
+
+// Lấy ID tuần hiện tại (Ví dụ: 2023-W42)
+function getWeekId() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
+    const week1 = new Date(d.getFullYear(), 0, 4);
+    const weekNum = 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+    return `${d.getFullYear()}-W${weekNum}`;
+}
+
 function checkAndAddDay(userId) {
     if (!isDbReady) return;
     const today = new Date().toISOString().split('T')[0];
@@ -121,7 +137,7 @@ async function generateBoardImage(guild) {
     ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 18px sans-serif';
     ctx.fillText('TÊN NHÂN VIÊN', 90, 115); 
     ctx.fillText('TRẠNG THÁI', 450, 115); 
-    ctx.fillText('THỜI GIAN', 680, 115);
+    ctx.fillText('TỔNG THỜI GIAN', 630, 115);
 
     let y = headerHeight;
     for (let i = 0; i < activeUsers.length; i++) {
@@ -147,7 +163,7 @@ async function generateBoardImage(guild) {
         ctx.fillStyle = statusColor; ctx.font = 'bold 18px sans-serif'; ctx.fillText(statusText, 450, y + 40);
 
         let time = u.total_time; if (u.is_on_duty) time += (Date.now() - u.start_time);
-        ctx.fillStyle = '#dbdee1'; ctx.font = '20px sans-serif'; ctx.fillText(formatTime(time), 680, y + 40);
+        ctx.fillStyle = '#dbdee1'; ctx.font = '20px sans-serif'; ctx.fillText(formatTime(time), 630, y + 40);
         y += rowHeight;
     }
     return canvas.toBuffer('image/png');
@@ -158,11 +174,8 @@ async function generateBXHImage(guild) {
     const stmt = db.prepare('SELECT * FROM users ORDER BY total_time DESC LIMIT 10'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
     if (users.length === 0) return null;
 
-    // Đếm số người đã Online
     let totalOnline = 0;
-    for (const u of users) {
-        if (u.total_time > 0 || u.is_on_duty === 1) totalOnline++;
-    }
+    for (const u of users) { if (u.total_time > 0 || u.is_on_duty === 1) totalOnline++; }
 
     const rowHeight = 70, headerHeight = 150, padding = 20, width = 850;
     const height = headerHeight + (users.length * rowHeight) + padding;
@@ -173,15 +186,14 @@ async function generateBXHImage(guild) {
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 100);
     ctx.fillStyle = '#FFD700'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('BẢNG XẾP HẠNG TOP 10', padding, 50);
-    ctx.fillStyle = '#b5bac1'; ctx.font = '16px sans-serif'; 
-    ctx.fillText(`Tuần này đã có ${totalOnline} nhân sự Online trực.`, padding, 80);
+    ctx.fillStyle = '#b5bac1'; ctx.font = '16px sans-serif'; ctx.fillText(`Tổng số nhân sự từng Online: ${totalOnline} người.`, padding, 80);
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 100, width, 50);
     ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 18px sans-serif';
     ctx.fillText('HẠNG', 20, 132);
     ctx.fillText('TÊN NHÂN VIÊN', 100, 132);
     ctx.fillText('TRẠNG THÁI', 450, 132);
-    ctx.fillText('TỔNG THỜI GIAN', 650, 132);
+    ctx.fillText('TỔNG THỜI GIAN', 630, 132);
 
     let y = headerHeight;
     for (let i = 0; i < users.length; i++) {
@@ -211,45 +223,70 @@ async function generateBXHImage(guild) {
         ctx.fillStyle = statusColor; ctx.font = 'bold 18px sans-serif'; ctx.fillText(statusText, 450, y + 42);
 
         let time = u.total_time; if (u.is_on_duty) time += (Date.now() - u.start_time);
-        ctx.fillStyle = '#dbdee1'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(formatTime(time), 650, y + 42);
+        ctx.fillStyle = '#dbdee1'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(formatTime(time), 630, y + 42);
         y += rowHeight;
     }
     return canvas.toBuffer('image/png');
 }
 
-// 3. Vẽ Bảng Thống Kê (Stats)
+// 3. Vẽ Bảng Thống Kê (Stats) - Chi tiết từng người (Có thêm Tuần Này)
 async function generateStatsImage(guild) {
-    const stmt = db.prepare('SELECT * FROM users ORDER BY total_time DESC'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
+    const currentWeek = getWeekId();
+    // Lấy dữ liệu tổng hợp kèm thời gian tuần này
+    const query = `
+        SELECT u.*, COALESCE(w.week_time, 0) as week_time 
+        FROM users u 
+        LEFT JOIN weekly_history w ON u.user_id = w.user_id AND w.week_id = ?
+        ORDER BY u.total_time DESC
+    `;
+    const stmt = db.prepare(query);
+    stmt.bind([currentWeek]);
+    const users = []; 
+    while (stmt.step()) users.push(stmt.getAsObject()); 
+    stmt.free();
     
-    const activeUsers = users.filter(u => u.total_time > 0 || u.is_on_duty === 1);
+    const activeUsers = users.filter(u => u.total_time > 0 || u.is_on_duty === 1 || u.week_time > 0);
     if (activeUsers.length === 0) return null;
 
     let tM = 0, tD = 0, tT = 0, oC = 0;
     for (const u of activeUsers) {
         tM++; tD += u.total_days;
-        if (u.is_on_duty) { oC++; tT += (u.total_time + (Date.now() - u.start_time)); } else tT += u.total_time;
+        if (u.is_on_duty) { oC++; tT += (u.total_time + (Date.now() - u.start_time)); } 
+        else { tT += u.total_time; }
     }
 
-    const rowHeight = 65, headerHeight = 260, padding = 20, width = 800;
+    const rowHeight = 65, headerHeight = 280, padding = 20, width = 850;
     const height = headerHeight + (activeUsers.length * rowHeight) + padding;
     
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
+    // Nền
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
-    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 120);
-    ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('THỐNG KÊ SERVER', padding, 60);
-    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 22px sans-serif'; ctx.fillText(`Tổng nhân sự: ${tM}   |   Đang Online: ${oC}`, padding, 100);
     
-    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 130, width, 130);
+    // Header
+    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 120);
+    ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('THỐNG KÊ CHI TIẾT', padding, 55);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; 
+    ctx.fillText(`Tổng nhân sự: ${tM}   |   Đang Online: ${oC}`, padding, 90);
+    
+    // Tổng quan
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 130, width, 100);
     ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif';
     ctx.fillText('Tổng ngày trực:', padding, 165); 
     ctx.fillStyle = '#dbdee1'; ctx.fillText(`${tD} ngày`, 250, 165);
     
-    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif'; ctx.fillText('Tổng thời gian:', padding, 200); 
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif'; 
+    ctx.fillText('Tổng thời gian:', padding, 200); 
     ctx.fillStyle = '#dbdee1'; ctx.fillText(`${formatTime(tT)}`, 250, 200);
 
-    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif'; ctx.fillText('Danh sách nhân sự:', padding, 240);
+    // Tiêu đề cột (Thêm cột Tuần Này)
+    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 230, width, 50);
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 18px sans-serif';
+    ctx.fillText('TÊN NHÂN VIÊN', 80, 262);
+    ctx.fillText('TRẠNG THÁI', 380, 262);
+    ctx.fillText('TUẦN NÀY', 530, 262);  // Cột mới
+    ctx.fillText('TỔNG CỘNG', 680, 262);
 
     let y = headerHeight;
     for (let i = 0; i < activeUsers.length; i++) {
@@ -259,16 +296,28 @@ async function generateStatsImage(guild) {
         
         if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
 
-        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(name.substring(0, 20), 80, y + 40);
+        // Tên
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px sans-serif'; 
+        ctx.fillText(name.substring(0, 18), 80, y + 40);
 
+        // Trạng thái
         let statusText = "OFFLINE", statusColor = "#ed4245";
         if (u.is_on_leave) { statusText = "ON LEAVE"; statusColor = "#fee75c"; }
         else if (u.is_on_duty) { statusText = "ON DUTY"; statusColor = "#57f287"; }
-        ctx.fillStyle = statusColor; ctx.font = 'bold 18px sans-serif'; ctx.fillText(statusText, 400, y + 40);
+        ctx.fillStyle = statusColor; ctx.font = 'bold 16px sans-serif'; 
+        ctx.fillText(statusText, 380, y + 40);
 
-        let time = u.total_time; let extraStr = "";
-        if (u.is_on_duty) { const sess = Date.now() - u.start_time; time += sess; extraStr = ` (+${formatTime(sess)})`; }
-        ctx.fillStyle = '#dbdee1'; ctx.font = '20px sans-serif'; ctx.fillText(`${formatTime(time)}${extraStr}`, 550, y + 40);
+        // Tuần này (Màu xanh dương cho nổi bật)
+        let weekTime = u.week_time;
+        if (u.is_on_duty) weekTime += (Date.now() - u.start_time); // Nếu đang trực thì cộng thêm giờ hiện tại vào tuần
+        ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 18px sans-serif'; 
+        ctx.fillText(formatTime(weekTime), 530, y + 40);
+
+        // Tổng cộng
+        let totalTime = u.total_time; 
+        if (u.is_on_duty) totalTime += (Date.now() - u.start_time);
+        ctx.fillStyle = '#dbdee1'; ctx.font = 'bold 18px sans-serif'; 
+        ctx.fillText(formatTime(totalTime), 680, y + 40);
         
         y += rowHeight;
     }
@@ -333,12 +382,13 @@ client.on(Events.InteractionCreate, async interaction => {
         if (commandName === 'setupduty') { config.dutyChannelId = channel.id; saveConfig(); return interaction.reply(`✅ Đã đặt kênh Log On/Off.`); }
         if (commandName === 'setupwarning') { config.warningChannelId = channel.id; saveConfig(); return interaction.reply(`✅ Đã đặt kênh Cảnh báo.`); }
         if (commandName === 'setupleave') { config.leaveChannelId = channel.id; saveConfig(); return interaction.reply(`✅ Đã đặt kênh Nghỉ phép.`); }
-        if (commandName === 'resetuser') { const targetUser = options.getUser('user'); db.run('DELETE FROM users WHERE user_id = ?', [targetUser.id]); db.run('DELETE FROM history WHERE user_id = ?', [targetUser.id]); saveDatabase(); if (config.boardChannelId) updateDutyBoard(client.channels.cache.get(config.boardChannelId)); return interaction.reply(`✅ Đã xóa dữ liệu của <@${targetUser.id}>.`); }
-        if (commandName === 'resetdata') { db.run('DELETE FROM users'); db.run('DELETE FROM history'); saveDatabase(); if (config.boardChannelId) updateDutyBoard(client.channels.cache.get(config.boardChannelId)); return interaction.reply("💥 **ĐÃ RESET TOÀN BỘ DỮ LIỆU!**"); }
+        if (commandName === 'resetuser') { const targetUser = options.getUser('user'); db.run('DELETE FROM users WHERE user_id = ?', [targetUser.id]); db.run('DELETE FROM history WHERE user_id = ?', [targetUser.id]); db.run('DELETE FROM weekly_history WHERE user_id = ?', [targetUser.id]); saveDatabase(); if (config.boardChannelId) updateDutyBoard(client.channels.cache.get(config.boardChannelId)); return interaction.reply(`✅ Đã xóa dữ liệu của <@${targetUser.id}>.`); }
+        if (commandName === 'resetdata') { db.run('DELETE FROM users'); db.run('DELETE FROM history'); db.run('DELETE FROM weekly_history'); saveDatabase(); if (config.boardChannelId) updateDutyBoard(client.channels.cache.get(config.boardChannelId)); return interaction.reply("💥 **ĐÃ RESET TOÀN BỘ DỮ LIỆU!**"); }
         if (commandName === 'export') {
             const stmtUsers = db.prepare('SELECT * FROM users'); const users = []; while (stmtUsers.step()) users.push(stmtUsers.getAsObject()); stmtUsers.free();
             const stmtHistory = db.prepare('SELECT * FROM history'); const history = []; while (stmtHistory.step()) history.push(stmtHistory.getAsObject()); stmtHistory.free();
-            fs.writeFileSync('backup.json', JSON.stringify({ users, history, exportDate: new Date().toISOString() }, null, 2));
+            const stmtWeek = db.prepare('SELECT * FROM weekly_history'); const week = []; while (stmtWeek.step()) week.push(stmtWeek.getAsObject()); stmtWeek.free();
+            fs.writeFileSync('backup.json', JSON.stringify({ users, history, week, exportDate: new Date().toISOString() }, null, 2));
             return interaction.reply({ content: `📦 **XUẤT DỮ LIỆU THÀNH CÔNG!**`, files: [{ attachment: 'backup.json', name: 'backup_dutylist.json' }] });
         }
         if (commandName === 'import') {
@@ -350,9 +400,10 @@ client.on(Events.InteractionCreate, async interaction => {
                 res.on('end', () => {
                     try {
                         const backup = JSON.parse(data);
-                        db.run('DELETE FROM users'); db.run('DELETE FROM history');
+                        db.run('DELETE FROM users'); db.run('DELETE FROM history'); db.run('DELETE FROM weekly_history');
                         for (const u of backup.users) { db.run(`INSERT INTO users (user_id, is_on_duty, start_time, total_time, total_days, is_on_leave, leave_date, schedule_start, schedule_end, has_warned_schedule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [u.user_id, u.is_on_duty, u.start_time, u.total_time, u.total_days, u.is_on_leave, u.leave_date, u.schedule_start, u.schedule_end, u.has_warned_schedule]); }
                         for (const h of backup.history) db.run(`INSERT INTO history (user_id, date) VALUES (?, ?)`, [h.user_id, h.date]);
+                        if (backup.week) { for (const w of backup.week) db.run(`INSERT INTO weekly_history (user_id, week_id, week_time) VALUES (?, ?, ?)`, [w.user_id, w.week_id, w.week_time]); }
                         saveDatabase(); if (config.boardChannelId) updateDutyBoard(client.channels.cache.get(config.boardChannelId));
                         interaction.editReply(`✅ **NHẬP DỮ LIỆU THÀNH CÔNG!**`);
                     } catch (e) { interaction.editReply("❌ Lỗi định dạng file JSON."); }
@@ -391,13 +442,17 @@ client.on(Events.InteractionCreate, async interaction => {
 
     const user = getOrCreateUser(interaction.user.id);
     const voiceChannel = interaction.member.voice.channel;
+    const currentWeek = getWeekId();
 
     if (interaction.customId === 'onduty_btn') {
         if (user.is_on_leave === 1) return interaction.reply({ content: "❌ Đang nghỉ phép!", ephemeral: true });
         if (user.is_on_duty) return interaction.reply({ content: "Bạn đã On Duty rồi!", ephemeral: true });
         if (!voiceChannel) return interaction.reply({ content: "Vào Voice Channel trước đã!", ephemeral: true });
+        
         checkAndAddDay(user.user_id);
-        db.run('UPDATE users SET is_on_duty = 1, start_time = ?, has_warned_schedule = 0 WHERE user_id = ?', [Date.now(), user.user_id]); saveDatabase();
+        db.run('UPDATE users SET is_on_duty = 1, start_time = ?, has_warned_schedule = 0 WHERE user_id = ?', [Date.now(), user.user_id]); 
+        saveDatabase();
+        
         await interaction.reply({ content: `Bắt đầu ca trực lúc ${getVNTime()}.`, ephemeral: true });
         if (logDutyChannel) {
             const now = new Date(); const timeStr = now.toLocaleTimeString('vi-VN', { hour12: false, timeZone: 'Asia/Ho_Chi_Minh' }); const footerTime = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' });
@@ -407,8 +462,25 @@ client.on(Events.InteractionCreate, async interaction => {
         updateDutyBoard(interaction.channel);
     } else if (interaction.customId === 'offduty_btn') {
         if (!user.is_on_duty) return interaction.reply({ content: "Bạn chưa On Duty!", ephemeral: true });
-        const sessionTime = Date.now() - user.start_time; const newTotal = user.total_time + sessionTime;
-        db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = ? WHERE user_id = ?', [newTotal, user.user_id]); saveDatabase();
+        
+        const sessionTime = Date.now() - user.start_time; 
+        const newTotal = user.total_time + sessionTime;
+        
+        // Cập nhật tổng thời gian
+        db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = ? WHERE user_id = ?', [newTotal, user.user_id]); 
+        
+        // Cập nhật thời gian tuần này
+        const weekStmt = db.prepare('SELECT * FROM weekly_history WHERE user_id = ? AND week_id = ?');
+        weekStmt.bind([user.user_id, currentWeek]);
+        if (weekStmt.step()) {
+            const currentWeekTime = weekStmt.getAsObject().week_time;
+            db.run('UPDATE weekly_history SET week_time = ? WHERE user_id = ? AND week_id = ?', [currentWeekTime + sessionTime, user.user_id, currentWeek]);
+        } else {
+            db.run('INSERT INTO weekly_history (user_id, week_id, week_time) VALUES (?, ?, ?)', [user.user_id, currentWeek, sessionTime]);
+        }
+        weekStmt.free();
+        saveDatabase();
+        
         await interaction.reply({ content: `Đã kết thúc ca. Ca này: **${formatTime(sessionTime)}**`, ephemeral: true });
         if (logDutyChannel) {
             const now = new Date(); const timeStr = now.toLocaleTimeString('vi-VN', { hour12: false, timeZone: 'Asia/Ho_Chi_Minh' }); const footerTime = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' });
@@ -432,7 +504,6 @@ client.on(Events.MessageCreate, async message => {
         return message.channel.send("✅ Đã setup bảng chấm công tại kênh này!");
     }
 
-    // LỆNH BXH BẰNG ẢNH
     if (message.content === '!bxh') {
         try {
             const buffer = await generateBXHImage(message.guild);
@@ -442,7 +513,6 @@ client.on(Events.MessageCreate, async message => {
         } catch (e) { message.reply("Lỗi khi tạo ảnh BXH."); }
     }
 
-    // LỆNH STATS BẰNG ẢNH
     if (message.content === '!stats') {
         try {
             const buffer = await generateStatsImage(message.guild);
@@ -458,7 +528,22 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     const user = getOrCreateUser(oldState.id);
     if (user.is_on_duty && oldState.channelId && !newState.channelId && user.is_on_leave !== 1) {
         const sT = Date.now() - user.start_time;
-        db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = total_time + ? WHERE user_id = ?', [sT, oldState.id]); saveDatabase();
+        const currentWeek = getWeekId();
+        
+        db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = total_time + ? WHERE user_id = ?', [sT, oldState.id]); 
+        
+        // Cập nhật tuần nếu bị rớt mạng
+        const weekStmt = db.prepare('SELECT * FROM weekly_history WHERE user_id = ? AND week_id = ?');
+        weekStmt.bind([oldState.id, currentWeek]);
+        if (weekStmt.step()) {
+            const currentWeekTime = weekStmt.getAsObject().week_time;
+            db.run('UPDATE weekly_history SET week_time = ? WHERE user_id = ? AND week_id = ?', [currentWeekTime + sT, oldState.id, currentWeek]);
+        } else {
+            db.run('INSERT INTO weekly_history (user_id, week_id, week_time) VALUES (?, ?, ?)', [oldState.id, currentWeek, sT]);
+        }
+        weekStmt.free();
+        saveDatabase();
+
         const wC = config.warningChannelId ? client.channels.cache.get(config.warningChannelId) : client.channels.cache.get(config.boardChannelId);
         if (wC) { const warnEmbed = new EmbedBuilder().setTitle('CẢNH BÁO RỚT MẠNG').setDescription(`**Nhân viên:** <@${oldState.id}>\n**Lý do:** Tự động rời Voice Channel khi đang On Duty.\n**Thời gian ca này:** ${formatTime(sT)}`).setColor(0xFFA500).setTimestamp(); wC.send({ embeds: [warnEmbed] }); }
     }
