@@ -324,23 +324,23 @@ async function updateDutyBoard(channel) {
         let buffer = null;
         try { buffer = await generateBoardImage(channel.guild); } catch (err) { console.error("Lỗi vẽ bảng:", err); }
         
-        // CẬP NHẬT EMOJI TÙY CHỈNH VÀO NÚT BẤM
+        // THÊM EMOJI TÙY CHỈNH VÀO NÚT BẤM
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('onduty_btn')
                 .setLabel('On Duty')
                 .setStyle(ButtonStyle.Success)
-                .setEmoji('1570176137722724435'), // ID Emoji On của bạn
+                .setEmoji('1570176137722724435'), // ID Emoji On
             new ButtonBuilder()
                 .setCustomId('offduty_btn')
                 .setLabel('Off Duty')
                 .setStyle(ButtonStyle.Danger)
-                .setEmoji('1570176005883306068'), // ID Emoji Off của bạn
+                .setEmoji('1570176005883306068'), // ID Emoji Off
             new ButtonBuilder()
                 .setCustomId('leave_btn')
                 .setLabel('Xin Nghỉ')
                 .setStyle(ButtonStyle.Secondary)
-                .setEmoji('🛌') 
+                .setEmoji('1570177567434997820') // ID Emoji LoveLetter1
         );
 
         const msgs = await channel.messages.fetch({ limit: 50 }); 
@@ -423,23 +423,45 @@ client.on(Events.InteractionCreate, async interaction => {
     const logDutyChannel = config.dutyChannelId ? client.channels.cache.get(config.dutyChannelId) : client.channels.cache.get(config.boardChannelId);
     const logLeaveChannel = config.leaveChannelId ? client.channels.cache.get(config.leaveChannelId) : client.channels.cache.get(config.boardChannelId);
 
+    // XỬ LÝ NÚT XIN NGHỈ
     if (interaction.customId === 'leave_btn') {
         const user = getOrCreateUser(interaction.user.id);
         if (user.is_on_leave === 1) return interaction.reply({ content: "❌ Bạn đã xin nghỉ hôm nay rồi!", ephemeral: true });
-        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`approve_leave_${interaction.user.id}`).setLabel('Chấp nhận').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`deny_leave_${interaction.user.id}`).setLabel('Từ chối').setStyle(ButtonStyle.Danger));
-        if(logLeaveChannel) await logLeaveChannel.send({ content: `📩 **ĐƠN XIN NGHỈ** từ <@${interaction.user.id}>. Admin duyệt:`, components: [row] });
-        return interaction.reply({ content: "Đã gửi đơn.", ephemeral: true });
+        
+        // THIẾT KẾ LẠI LOG XIN NGHỈ CHO ĐẸP
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`approve_leave_${interaction.user.id}`).setLabel('Chấp nhận').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`deny_leave_${interaction.user.id}`).setLabel('Từ chối').setStyle(ButtonStyle.Danger)
+        );
+        
+        if(logLeaveChannel) {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('vi-VN', { hour12: false, timeZone: 'Asia/Ho_Chi_Minh' });
+            const dateStr = now.toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+
+            const leaveEmbed = new EmbedBuilder()
+                .setTitle('📩 ĐƠN XIN NGHỈ PHÉP MỚI')
+                .setDescription(`**Nhân viên:** <@${interaction.user.id}>\n**Thời gian gửi:** ${timeStr} - ${dateStr}\n\nVui lòng Admin xem xét và bấm nút bên dưới để duyệt.`)
+                .setColor(0xFFA500) // Màu cam
+                .setThumbnail(interaction.user.displayAvatarURL())
+                .setFooter({ text: 'Hệ thống quản lý nhân sự' })
+                .setTimestamp();
+
+            await logLeaveChannel.send({ embeds: [leaveEmbed], components: [row] });
+        }
+        return interaction.reply({ content: "✅ Đã gửi đơn xin nghỉ đến Admin.", ephemeral: true });
     }
+
     if (interaction.customId.startsWith('approve_leave_') && interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
         const targetId = interaction.customId.split('_')[2]; const today = new Date().toISOString().split('T')[0]; 
         db.run('UPDATE users SET is_on_leave = 1, leave_date = ? WHERE user_id = ?', [today, targetId]); saveDatabase();
-        try { const u = await client.users.fetch(targetId); await u.send(`✅ Đơn xin nghỉ của bạn đã được duyệt.`); } catch (e) {}
-        return interaction.update({ content: `✅ Đã duyệt đơn cho <@${targetId}>.`, components: [] });
+        try { const u = await client.users.fetch(targetId); await u.send(`✅ **THÔNG BÁO:** Đơn xin nghỉ phép của bạn đã được Admin **${interaction.user.username}** phê duyệt.`); } catch (e) {}
+        return interaction.update({ content: `✅ **${interaction.user.username}** đã duyệt đơn xin nghỉ cho <@${targetId}>.`, embeds: [], components: [] });
     }
     if (interaction.customId.startsWith('deny_leave_') && interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
         const targetId = interaction.customId.split('_')[2];
-        try { const u = await client.users.fetch(targetId); await u.send(`❌ Đơn xin nghỉ của bạn đã bị từ chối.`); } catch (e) {}
-        return interaction.update({ content: `❌ Đã từ chối đơn của <@${targetId}>.`, components: [] });
+        try { const u = await client.users.fetch(targetId); await u.send(`❌ **THÔNG BÁO:** Đơn xin nghỉ phép của bạn đã bị Admin **${interaction.user.username}** từ chối.`); } catch (e) {}
+        return interaction.update({ content: `❌ **${interaction.user.username}** đã từ chối đơn xin nghỉ của <@${targetId}>.`, embeds: [], components: [] });
     }
 
     if (interaction.customId !== 'onduty_btn' && interaction.customId !== 'offduty_btn') return;
