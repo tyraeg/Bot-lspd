@@ -12,6 +12,12 @@ const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 // ID ADMIN ĐÃ ĐƯỢC CẬP NHẬT
 // ==========================================
 const ADMIN_ID = '1498554147304247296'; 
+
+// ==========================================
+// ID ROLE BẮT BUỘC (Nếu điền ID, chỉ ai có role này mới bấm On/Off được)
+// Nếu không muốn giới hạn, hãy để trống ''
+// ==========================================
+const REQUIRED_ROLE_ID = '1568699055561904198'; 
 // ==========================================
 
 let config = { dutyChannelId: null, warningChannelId: null, leaveChannelId: null, boardChannelId: null };
@@ -121,8 +127,6 @@ const commands = [
     new SlashCommandBuilder().setName('resetnghi').setDescription('Gỡ trạng thái nghỉ phép cho nhân viên').addUserOption(opt => opt.setName('user').setDescription('Chọn nhân viên').setRequired(true)),
     new SlashCommandBuilder().setName('export').setDescription('Xuất file sao lưu (Gửi qua DM)'),
     new SlashCommandBuilder().setName('import').setDescription('Nhập file sao lưu').addAttachmentOption(opt => opt.setName('file').setDescription('File json').setRequired(true)),
-    
-    // LỆNH SET STATUS MỚI (CÓ CẢ TRẠNG THÁI ONLINE/OFF)
     new SlashCommandBuilder().setName('setstatus').setDescription('Đổi trạng thái của Bot')
         .addStringOption(opt => opt.setName('presence').setDescription('Trạng thái hoạt động').setRequired(true).addChoices(
             { name: 'Online (Trực tuyến)', value: 'online' },
@@ -141,7 +145,6 @@ const commands = [
 client.once(Events.ClientReady, async () => {
     console.log(`🚀 BOT ĐÃ ONLINE: ${client.user.tag}`);
     
-    // ĐẶT TRẠNG THÁI MẶC ĐỊNH KHI KHỞI ĐỘNG: ONLINE + ĐANG XEM
     client.user.setPresence({
         status: 'online',
         activities: [{ name: 'LSPD - GtaNetWork', type: ActivityType.Watching }]
@@ -475,7 +478,6 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // LỆNH ĐỔI STATUS
         if (commandName === 'setstatus') {
             const presence = options.getString('presence');
             const type = options.getString('type');
@@ -544,6 +546,21 @@ client.on(Events.InteractionCreate, async interaction => {
         } else {
             try { const u = await client.users.fetch(targetId); await u.send(`❌ **THÔNG BÁO:** Đơn xin nghỉ phép của bạn đã bị Chief Of Police **${interaction.user.username}** từ chối.`); } catch (e) {}
             return interaction.update({ content: `❌ **${interaction.user.username}** đã từ chối đơn xin nghỉ của <@${targetId}>.`, embeds: [], components: [] });
+        }
+    }
+
+    // ==========================================
+    // TÍNH NĂNG KIỂM TRA ROLE BẮT BUỘC KHI BẤM ON/OFF DUTY
+    // ==========================================
+    if (interaction.customId === 'onduty_btn' || interaction.customId === 'offduty_btn') {
+        // Nếu bạn có điền ID Role, bot sẽ kiểm tra xem người dùng có Role đó không
+        if (REQUIRED_ROLE_ID && REQUIRED_ROLE_ID !== 'ĐIỀN_ID_ROLE_VÀO_ĐÂY') {
+            if (!interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
+                return interaction.reply({ 
+                    content: "❌ Bạn không có Role nhân sự, không thể bấm On/Off Duty!", 
+                    ephemeral: true 
+                });
+            }
         }
     }
 
