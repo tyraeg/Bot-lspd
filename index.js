@@ -148,8 +148,7 @@ const commands = [
         .addStringOption(opt => opt.setName('start').setDescription('Giờ bắt đầu (VD: 14:00)').setRequired(true))
         .addStringOption(opt => opt.setName('end').setDescription('Giờ kết thúc (VD: 15:30)').setRequired(true))
         .addBooleanOption(opt => opt.setName('lap').setDescription('Lặp lại hàng ngày? (True = Có, False = Chỉ hôm nay)').setRequired(true)),
-    new SlashCommandBuilder().setName('xemca').setDescription('Xem lịch trực của một nhân viên')
-        .addUserOption(opt => opt.setName('user').setDescription('Chọn người muốn xem').setRequired(true)),
+    new SlashCommandBuilder().setName('xemca').setDescription('Xem lịch trực của tất cả nhân viên (Dạng ảnh)'),
     new SlashCommandBuilder().setName('setupduty').setDescription('Đặt kênh Log On/Off'),
     new SlashCommandBuilder().setName('setupwarning').setDescription('Đặt kênh Cảnh báo'),
     new SlashCommandBuilder().setName('setupleave').setDescription('Đặt kênh Nghỉ phép'),
@@ -471,6 +470,56 @@ async function generateProfileImage(targetUser, member) {
     return canvas.toBuffer('image/png');
 }
 
+// 5. Vẽ Bảng Lịch Trực Tất Cả Mọi Người (MỚI)
+async function generateAllSchedulesImage(guild) {
+    const stmt = db.prepare('SELECT * FROM users WHERE schedule_start IS NOT NULL'); 
+    const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
+    
+    if (users.length === 0) return null;
+
+    const rowHeight = 60, headerHeight = 100, padding = 20, width = 800;
+    const height = headerHeight + (users.length * rowHeight) + padding;
+    
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 85);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 30px sans-serif'; ctx.fillText('LỊCH TRỰC TOÀN BỘ NHÂN SỰ', padding, 45);
+    ctx.font = '14px sans-serif'; ctx.fillStyle = '#b5bac1'; ctx.fillText(`Cập nhật: ${getVNTime()}`, padding, 70);
+
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 85, width, 30);
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 16px sans-serif';
+    ctx.fillText('TÊN NHÂN VIÊN', 80, 105); 
+    ctx.fillText('GIỜ BẮT ĐẦU', 350, 105); 
+    ctx.fillText('GIỜ KẾT THÚC', 500, 105);
+    ctx.fillText('LẶP LẠI', 680, 105);
+
+    let y = headerHeight;
+    for (let i = 0; i < users.length; i++) {
+        let u = users[i];
+        const member = await guild.members.fetch(u.user_id).catch(() => null);
+        const name = member ? member.displayName : "Unknown";
+        
+        if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
+
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px sans-serif'; 
+        ctx.fillText(name.substring(0, 18), 80, y + 38);
+
+        ctx.fillStyle = '#00BFFF'; ctx.font = '18px sans-serif'; 
+        ctx.fillText(u.schedule_start, 350, y + 38);
+
+        ctx.fillStyle = '#FFA500'; ctx.font = '18px sans-serif'; 
+        ctx.fillText(u.schedule_end, 500, y + 38);
+
+        ctx.fillStyle = u.repeat_daily === 1 ? '#57f287' : '#ed4245'; ctx.font = '16px sans-serif'; 
+        ctx.fillText(u.repeat_daily === 1 ? 'Hàng ngày' : 'Hôm nay', 680, y + 38);
+
+        y += rowHeight;
+    }
+    return canvas.toBuffer('image/png');
+}
+
 // ==========================================
 // CẬP NHẬT BẢNG VÀ LỆNH
 // ==========================================
@@ -555,39 +604,15 @@ client.on(Events.InteractionCreate, async interaction => {
             return interaction.reply({ content: `✅ Đã set lịch cho <@${targetUser.id}>: Từ **${startTime}** đến **${endTime}** (${repeatStr}).` });
         }
 
+        // LỆNH XEM CA MỚI (VẼ ẢNH TOÀN BỘ)
         if (commandName === 'xemca') {
-            const targetUser = options.getUser('user');
-            const user = getOrCreateUser(targetUser.id);
-            
-            if (!user.schedule_start || !user.schedule_end) {
-                return interaction.reply({ content: `📅 <@${targetUser.id}> hiện chưa có lịch trực nào.`, ephemeral: true });
-            }
-
-            const isRepeat = user.repeat_daily === 1;
-            const now = new Date();
-            const currentMinutes = now.getHours() * 60 + now.getMinutes();
-            const startMins = timeToMinutes(user.schedule_start);
-            const endMins = timeToMinutes(user.schedule_end);
-
-            let statusStr = "Chưa tới giờ";
-            let color = 0xFFFF00; // Vàng
-            if (currentMinutes >= startMins && currentMinutes <= endMins) {
-                statusStr = "Đang trong ca trực";
-                color = 0x00FF00; // Xanh lá
-            } else if (currentMinutes > endMins) {
-                statusStr = "Đã hết ca";
-                color = 0xFF0000; // Đỏ
-            }
-
-            const embed = new EmbedBuilder()
-                .setTitle('📅 Lịch Trực LSPD - GTANetWork')
-                .setDescription(`**Nhân viên:** <@${targetUser.id}>\n**Giờ bắt đầu:** ${user.schedule_start}\n**Giờ kết thúc:** ${user.schedule_end}\n**Lặp lại:** ${isRepeat ? "Hàng ngày" : "Chỉ hôm nay"}\n**Trạng thái ca:** ${statusStr}`)
-                .setColor(color)
-                .setThumbnail(targetUser.displayAvatarURL())
-                .setFooter({ text: 'Hệ Thống Quản Lý LSPD • GTANetWork' })
-                .setTimestamp();
-
-            return interaction.reply({ embeds: [embed] });
+            await interaction.deferReply();
+            try {
+                const buffer = await generateAllSchedulesImage(guild);
+                if (!buffer) return interaction.editReply("📅 Hiện chưa có ai được set lịch trực.");
+                const attachment = new AttachmentBuilder(buffer, { name: 'all_schedules.png' });
+                return interaction.editReply({ files: [attachment] });
+            } catch (e) { return interaction.editReply("❌ Lỗi khi tạo ảnh lịch trực."); }
         }
 
         if (commandName === 'setupduty') { config.dutyChannelId = channel.id; saveConfig(); return interaction.reply(`✅ Đã đặt kênh Log On/Off.`); }
@@ -777,7 +802,6 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.update({ content: `✅ **${interaction.user.username}** đã duyệt đơn xin nghỉ cho <@${targetId}>.`, embeds: [], components: [] });
     }
 
-    // ĐÃ SỬA: TỪ CHỐI TRỰC TIẾP, KHÔNG CẦN FORM
     if (interaction.customId.startsWith('deny_leave_')) {
         if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) return interaction.reply({ content: "❌ Chỉ Admin Server mới có quyền từ chối đơn xin nghỉ!", ephemeral: true });
 
