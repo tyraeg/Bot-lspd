@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, PermissionFlagsBits, REST, Routes, SlashCommandBuilder, AttachmentBuilder, ActivityType, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, PermissionFlagsBits, REST, Routes, SlashCommandBuilder, AttachmentBuilder, ActivityType, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType } = require('discord.js');
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const initSqlJs = require('sql.js');
 const fs = require('fs');
@@ -16,7 +16,7 @@ const ADMIN_ID = '1498554147304247296';
 // ==========================================
 // ID ROLE BẮT BUỘC (Để trống nếu không cần)
 // ==========================================
-const REQUIRED_ROLE_ID = '1568699055561904198'; 
+const REQUIRED_ROLE_ID = 'ĐIỀN_ID_ROLE_VÀO_ĐÂY'; 
 // ==========================================
 
 let config = { dutyChannelId: null, warningChannelId: null, leaveChannelId: null, boardChannelId: null };
@@ -427,6 +427,7 @@ async function updateDutyBoard(channel) {
 }
 
 client.on(Events.InteractionCreate, async interaction => {
+    // XỬ LÝ LỆNH SLASH
     if (interaction.isChatInputCommand()) {
         if (!isDbReady) return interaction.reply({ content: "Đang khởi động!", ephemeral: true });
         
@@ -460,14 +461,12 @@ client.on(Events.InteractionCreate, async interaction => {
             return interaction.reply({ content: `✅ Đã gỡ trạng thái nghỉ phép cho <@${targetUser.id}>. Người này có thể On Duty trở lại.` });
         }
 
-        // LỆNH EXPORT (CẤU HÌNH + DỮ LIỆU)
         if (commandName === 'export') {
             const stmtUsers = db.prepare('SELECT * FROM users'); const users = []; while (stmtUsers.step()) users.push(stmtUsers.getAsObject()); stmtUsers.free();
             const stmtHistory = db.prepare('SELECT * FROM history'); const history = []; while (stmtHistory.step()) history.push(stmtHistory.getAsObject()); stmtHistory.free();
             const stmtWeek = db.prepare('SELECT * FROM weekly_history'); const week = []; while (stmtWeek.step()) week.push(stmtWeek.getAsObject()); stmtWeek.free();
             const stmtBlacklist = db.prepare('SELECT * FROM blacklist'); const blacklist = []; while (stmtBlacklist.step()) blacklist.push(stmtBlacklist.getAsObject()); stmtBlacklist.free();
             
-            // GOM CHUNG CẢ CONFIG VÀ DATABASE
             const backupData = { 
                 config, 
                 users, 
@@ -492,8 +491,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 return interaction.editReply({ content: `❌ Không thể gửi tin nhắn riêng cho Admin (Có thể Admin đã chặn DM). Dưới đây là file trực tiếp:`, files: [{ attachment: 'backup.json', name: 'backup_dutylist.json' }] });
             }
         }
-
-        // LỆNH IMPORT (KHÔI PHỤC CẢ CẤU HÌNH LẪN DỮ LIỆU)
         if (commandName === 'import') {
             const attachment = options.getAttachment('file');
             if (!attachment.name.endsWith('.json')) return interaction.reply({ content: "❌ Chỉ nhận file `.json`.", ephemeral: true });
@@ -504,13 +501,11 @@ client.on(Events.InteractionCreate, async interaction => {
                     try {
                         const backup = JSON.parse(data);
                         
-                        // 1. Khôi phục Config
                         if (backup.config) {
                             config = backup.config;
                             saveConfig();
                         }
 
-                        // 2. Khôi phục Database
                         db.run('DELETE FROM users'); db.run('DELETE FROM history'); db.run('DELETE FROM weekly_history'); db.run('DELETE FROM blacklist');
                         if (backup.users) { for (const u of backup.users) { db.run(`INSERT INTO users (user_id, is_on_duty, start_time, total_time, total_days, is_on_leave, leave_date, schedule_start, schedule_end, has_warned_schedule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [u.user_id, u.is_on_duty, u.start_time, u.total_time, u.total_days, u.is_on_leave, u.leave_date, u.schedule_start, u.schedule_end, u.has_warned_schedule]); } }
                         if (backup.history) { for (const h of backup.history) db.run(`INSERT INTO history (user_id, date) VALUES (?, ?)`, [h.user_id, h.date]); }
@@ -519,7 +514,6 @@ client.on(Events.InteractionCreate, async interaction => {
                         
                         saveDatabase(); 
                         
-                        // Cập nhật lại bảng nếu có config
                         if (config.boardChannelId) {
                             const bChannel = client.channels.cache.get(config.boardChannelId);
                             if (bChannel) updateDutyBoard(bChannel);
@@ -611,6 +605,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
     }
 
+    // XỬ LÝ NÚT BẤM
     if (!interaction.isButton()) return;
     if (!isDbReady) return interaction.reply({ content: "Hệ thống đang khởi động!", ephemeral: true });
 
@@ -644,23 +639,82 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ content: "✅ Đã gửi đơn xin nghỉ đến Admin.", ephemeral: true });
     }
 
-    if (interaction.customId.startsWith('approve_leave_') || interaction.customId.startsWith('deny_leave_')) {
+    // XỬ LÝ DUYỆT ĐƠN XIN NGHỈ
+    if (interaction.customId.startsWith('approve_leave_')) {
         if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
             return interaction.reply({ content: "❌ Chỉ Admin Server mới có quyền duyệt đơn xin nghỉ!", ephemeral: true });
         }
 
         const targetId = interaction.customId.split('_')[2];
-        const isApprove = interaction.customId.startsWith('approve_leave_');
+        const now = new Date();
+        const dateStr = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
 
-        if (isApprove) {
-            const today = new Date().toISOString().split('T')[0]; 
-            db.run('UPDATE users SET is_on_leave = 1, leave_date = ? WHERE user_id = ?', [today, targetId]); saveDatabase();
-            try { const u = await client.users.fetch(targetId); await u.send(`✅ **THÔNG BÁO:** Đơn xin nghỉ phép của bạn đã được Chief Of Police **${interaction.user.username}** phê duyệt.`); } catch (e) {}
-            return interaction.update({ content: `✅ **${interaction.user.username}** đã duyệt đơn xin nghỉ cho <@${targetId}>.`, embeds: [], components: [] });
-        } else {
-            try { const u = await client.users.fetch(targetId); await u.send(`❌ **THÔNG BÁO:** Đơn xin nghỉ phép của bạn đã bị Chief Of Police **${interaction.user.username}** từ chối.`); } catch (e) {}
-            return interaction.update({ content: `❌ **${interaction.user.username}** đã từ chối đơn xin nghỉ của <@${targetId}>.`, embeds: [], components: [] });
+        const today = new Date().toISOString().split('T')[0]; 
+        db.run('UPDATE users SET is_on_leave = 1, leave_date = ? WHERE user_id = ?', [today, targetId]); 
+        saveDatabase();
+
+        try { 
+            const u = await client.users.fetch(targetId); 
+            const dmEmbed = new EmbedBuilder()
+                .setTitle('✅ ĐƠN XIN NGHỈ ĐÃ ĐƯỢC DUYỆT')
+                .setDescription(`**Chào ${u.username},**\n\nĐơn xin nghỉ phép của bạn đã được **Chief Of Police** phê duyệt thành công.\n\n**Thời gian duyệt:** ${dateStr}\n**Trạng thái:** Được phép nghỉ phép\n\n*Chúc bạn có một ngày nghỉ vui vẻ! Hệ thống sẽ tự động mở khóa On Duty vào 00:00 ngày mai.*`)
+                .setColor(0x00FF00)
+                .setThumbnail(u.displayAvatarURL())
+                .setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' })
+                .setTimestamp();
+            await u.send({ embeds: [dmEmbed] }); 
+        } catch (e) { console.log("Không thể gửi DM."); }
+
+        return interaction.update({ content: `✅ **${interaction.user.username}** đã duyệt đơn xin nghỉ cho <@${targetId}>.`, embeds: [], components: [] });
+    }
+
+    // XỬ LÝ TỪ CHỐI ĐƠN XIN NGHỈ (BẬT FORM NHẬP LÝ DO)
+    if (interaction.customId.startsWith('deny_leave_')) {
+        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            return interaction.reply({ content: "❌ Chỉ Admin Server mới có quyền từ chối đơn xin nghỉ!", ephemeral: true });
         }
+
+        const targetId = interaction.customId.split('_')[2];
+
+        const modal = new ModalBuilder()
+            .setCustomId(`deny_leave_modal_${targetId}`)
+            .setTitle('Từ chối đơn xin nghỉ phép');
+
+        const reasonInput = new TextInputBuilder()
+            .setCustomId('deny_reason')
+            .setLabel('Nhập lý do từ chối')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('VD: Server đang thiếu người, không thể nghỉ lúc này...')
+            .setRequired(true);
+
+        const actionRow = new ActionRowBuilder().addComponents(reasonInput);
+        modal.addComponents(actionRow);
+
+        await interaction.showModal(modal);
+        return;
+    }
+
+    // XỬ LÝ KHI ADMIN GỬI FORM LÝ DO TỪ CHỐI
+    if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('deny_leave_modal_')) {
+        const targetId = interaction.customId.split('_')[3];
+        const reason = interaction.fields.getTextInputValue('deny_reason');
+        
+        const now = new Date();
+        const dateStr = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+
+        try { 
+            const u = await client.users.fetch(targetId); 
+            const dmEmbed = new EmbedBuilder()
+                .setTitle('❌ ĐƠN XIN NGHỈ BỊ TỪ CHỐI')
+                .setDescription(`**Chào ${u.username},**\n\nRất tiếc, đơn xin nghỉ phép của bạn đã bị **Chief Of Police** từ chối.\n\n**Thời gian xử lý:** ${dateStr}\n**Lý do:** ${reason}\n\n*Vui lòng tiếp tục công việc bình thường.*`)
+                .setColor(0xFF0000)
+                .setThumbnail(u.displayAvatarURL())
+                .setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' })
+                .setTimestamp();
+            await u.send({ embeds: [dmEmbed] }); 
+        } catch (e) { console.log("Không thể gửi DM."); }
+
+        return interaction.update({ content: `❌ **${interaction.user.username}** đã từ chối đơn xin nghỉ của <@${targetId}>.\n**Lý do:** ${reason}`, embeds: [], components: [] });
     }
 
     if (interaction.customId === 'onduty_btn' || interaction.customId === 'offduty_btn' || interaction.customId === 'leave_btn') {
