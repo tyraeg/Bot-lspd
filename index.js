@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, PermissionFlagsBits, REST, Routes, SlashCommandBuilder, AttachmentBuilder, ActivityType } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, PermissionFlagsBits, REST, Routes, SlashCommandBuilder, AttachmentBuilder, ActivityType, ChannelType } = require('discord.js');
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const initSqlJs = require('sql.js');
 const fs = require('fs');
@@ -9,7 +9,7 @@ const TOKEN = process.env.TOKEN;
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 
 // ==========================================
-// ID ADMIN ĐÃ ĐƯỢC CẬP NHẬT
+// ID ADMIN BOT (Người sở hữu bot)
 // ==========================================
 const ADMIN_ID = '1498554147304247296'; 
 
@@ -17,7 +17,7 @@ const ADMIN_ID = '1498554147304247296';
 // ID ROLE BẮT BUỘC (Nếu điền ID, chỉ ai có role này mới bấm On/Off được)
 // Nếu không muốn giới hạn, hãy để trống ''
 // ==========================================
-const REQUIRED_ROLE_ID = '1568699055561904198'; 
+const REQUIRED_ROLE_ID = 'ĐIỀN_ID_ROLE_VÀO_ĐÂY'; 
 // ==========================================
 
 let config = { dutyChannelId: null, warningChannelId: null, leaveChannelId: null, boardChannelId: null };
@@ -139,7 +139,11 @@ const commands = [
             { name: 'Đang Xem (Watching)', value: 'WATCHING' },
             { name: 'Đang Nghe (Listening)', value: 'LISTENING' }
         ))
-        .addStringOption(opt => opt.setName('text').setDescription('Nội dung trạng thái').setRequired(true))
+        .addStringOption(opt => opt.setName('text').setDescription('Nội dung trạng thái').setRequired(true)),
+    new SlashCommandBuilder().setName('chat').setDescription('Gửi tin nhắn/ảnh thay mặt bot')
+        .addChannelOption(opt => opt.setName('channel').setDescription('Chọn kênh muốn gửi').addChannelTypes(ChannelType.GuildText).setRequired(true))
+        .addStringOption(opt => opt.setName('message').setDescription('Nội dung tin nhắn (Có thể bỏ trống nếu chỉ gửi ảnh)').setRequired(false))
+        .addAttachmentOption(opt => opt.setName('image').setDescription('Đính kèm ảnh/file (Không bắt buộc)').setRequired(false))
 ].map(command => command.toJSON());
 
 client.once(Events.ClientReady, async () => {
@@ -407,12 +411,15 @@ async function updateDutyBoard(channel) {
 }
 
 client.on(Events.InteractionCreate, async interaction => {
-    // KIỂM TRA QUYỀN ADMIN CHO LỆNH SLASH
+    // KIỂM TRA QUYỀN: CHỈ ADMIN BOT HOẶC ADMIN SERVER
     if (interaction.isChatInputCommand()) {
         if (!isDbReady) return interaction.reply({ content: "Đang khởi động!", ephemeral: true });
         
-        if (interaction.user.id !== ADMIN_ID) {
-            return interaction.reply({ content: "❌ Bạn không có quyền sử dụng lệnh này!", ephemeral: true });
+        const isBotAdmin = interaction.user.id === ADMIN_ID;
+        const isServerAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+
+        if (!isBotAdmin && !isServerAdmin) {
+            return interaction.reply({ content: "❌ Chỉ Admin Bot hoặc Admin Server mới có quyền sử dụng lệnh này!", ephemeral: true });
         }
 
         const { commandName, options, channel } = interaction;
@@ -495,6 +502,27 @@ client.on(Events.InteractionCreate, async interaction => {
             });
             return interaction.reply({ content: `✅ Đã đổi trạng thái thành **${presence.toUpperCase()}** | **${type} ${text}**`, ephemeral: true });
         }
+
+        if (commandName === 'chat') {
+            const targetChannel = options.getChannel('channel');
+            const messageContent = options.getString('message');
+            const imageAttachment = options.getAttachment('image');
+
+            try {
+                const payload = {};
+                if (messageContent) payload.content = messageContent;
+                if (imageAttachment) payload.files = [{ attachment: imageAttachment.url, name: imageAttachment.name }];
+
+                if (!payload.content && !payload.files) {
+                    return interaction.reply({ content: "❌ Bạn phải nhập nội dung tin nhắn hoặc đính kèm file!", ephemeral: true });
+                }
+
+                await targetChannel.send(payload);
+                return interaction.reply({ content: `✅ Đã gửi tin nhắn tới <#${targetChannel.id}>.`, ephemeral: true });
+            } catch (e) {
+                return interaction.reply({ content: `❌ Không thể gửi tin nhắn tới kênh này (Có thể bot thiếu quyền).`, ephemeral: true });
+            }
+        }
     }
 
     if (!interaction.isButton()) return;
@@ -549,11 +577,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
     }
 
-    // ==========================================
-    // TÍNH NĂNG KIỂM TRA ROLE BẮT BUỘC KHI BẤM ON/OFF DUTY
-    // ==========================================
     if (interaction.customId === 'onduty_btn' || interaction.customId === 'offduty_btn') {
-        // Nếu bạn có điền ID Role, bot sẽ kiểm tra xem người dùng có Role đó không
         if (REQUIRED_ROLE_ID && REQUIRED_ROLE_ID !== 'ĐIỀN_ID_ROLE_VÀO_ĐÂY') {
             if (!interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
                 return interaction.reply({ 
