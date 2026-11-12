@@ -14,7 +14,7 @@ const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const ADMIN_ID = '1498554147304247296'; 
 
 // ==========================================
-// ID ROLE BẮT BUỘC (Để trống nếu không cần)
+// ID ROLE BẮT BUỘC (Chỉ ai có Role này mới được On/Off Duty)
 // ==========================================
 const REQUIRED_ROLE_ID = '1568699055561904198'; 
 // ==========================================
@@ -39,7 +39,7 @@ async function initDatabase() {
             user_id TEXT PRIMARY KEY, is_on_duty INTEGER DEFAULT 0, start_time INTEGER DEFAULT 0,
             total_time INTEGER DEFAULT 0, total_days INTEGER DEFAULT 0, is_on_leave INTEGER DEFAULT 0,
             leave_date TEXT DEFAULT NULL, schedule_start TEXT DEFAULT NULL, schedule_end TEXT DEFAULT NULL,
-            has_warned_schedule INTEGER DEFAULT 0
+            has_warned_schedule INTEGER DEFAULT 0, unit TEXT DEFAULT 'Chưa cập nhật'
         )`);
         
         db.run(`CREATE TABLE IF NOT EXISTS blacklist (
@@ -52,11 +52,18 @@ async function initDatabase() {
         try { db.run('ALTER TABLE users ADD COLUMN schedule_start TEXT DEFAULT NULL'); } catch (e) {}
         try { db.run('ALTER TABLE users ADD COLUMN schedule_end TEXT DEFAULT NULL'); } catch (e) {}
         try { db.run('ALTER TABLE users ADD COLUMN has_warned_schedule INTEGER DEFAULT 0'); } catch (e) {}
+        try { db.run('ALTER TABLE users ADD COLUMN unit TEXT DEFAULT "Chưa cập nhật"'); } catch (e) {}
         
         db.run(`CREATE TABLE IF NOT EXISTS history (user_id TEXT, date TEXT, PRIMARY KEY (user_id, date))`);
+        
         db.run(`CREATE TABLE IF NOT EXISTS weekly_history (
             user_id TEXT, week_id TEXT, week_time INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, week_id)
+        )`);
+
+        db.run(`CREATE TABLE IF NOT EXISTS monthly_history (
+            user_id TEXT, month_id TEXT, month_time INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, month_id)
         )`);
         
         saveDatabase(); isDbReady = true;
@@ -86,6 +93,11 @@ function getWeekId() {
     } catch (e) { return "UNKNOWN-WEEK"; }
 }
 
+function getMonthId() {
+    const d = new Date();
+    return `${d.getFullYear()}-M${d.getMonth() + 1}`;
+}
+
 function checkLeaveStatus(user) {
     if (user.is_on_leave === 1 && user.leave_date) {
         const today = new Date().toISOString().split('T')[0];
@@ -110,10 +122,10 @@ function checkAndAddDay(userId) {
 }
 
 const getOrCreateUser = (userId) => {
-    if (!isDbReady) return { user_id: userId, is_on_duty: 0, start_time: 0, total_time: 0, total_days: 0, is_on_leave: 0, leave_date: null };
+    if (!isDbReady) return { user_id: userId, is_on_duty: 0, start_time: 0, total_time: 0, total_days: 0, is_on_leave: 0, leave_date: null, unit: 'Chưa cập nhật' };
     const stmt = db.prepare('SELECT * FROM users WHERE user_id = ?'); stmt.bind([userId]);
     let user = null; if (stmt.step()) user = stmt.getAsObject(); stmt.free();
-    if (!user) { db.run('INSERT INTO users (user_id) VALUES (?)', [userId]); saveDatabase(); user = { user_id: userId, is_on_duty: 0, start_time: 0, total_time: 0, total_days: 0, is_on_leave: 0, leave_date: null }; } else { user = checkLeaveStatus(user); }
+    if (!user) { db.run('INSERT INTO users (user_id) VALUES (?)', [userId]); saveDatabase(); user = { user_id: userId, is_on_duty: 0, start_time: 0, total_time: 0, total_days: 0, is_on_leave: 0, leave_date: null, unit: 'Chưa cập nhật' }; } else { user = checkLeaveStatus(user); }
     return user;
 };
 const formatTime = (ms) => {
@@ -159,7 +171,17 @@ const commands = [
     new SlashCommandBuilder().setName('blacklist').setDescription('Đưa một nhân viên vào danh sách đen (Cấm On Duty)')
         .addUserOption(opt => opt.setName('user').setDescription('Chọn người bị phạt').setRequired(true))
         .addStringOption(opt => opt.setName('reason').setDescription('Lý do vi phạm').setRequired(true))
-        .addChannelOption(opt => opt.setName('channel').setDescription('Kênh muốn gửi thông báo (Bỏ trống sẽ gửi vào kênh Cảnh báo)').addChannelTypes(ChannelType.GuildText).setRequired(false))
+        .addChannelOption(opt => opt.setName('channel').setDescription('Kênh muốn gửi thông báo (Bỏ trống sẽ gửi vào kênh Cảnh báo)').addChannelTypes(ChannelType.GuildText).setRequired(false)),
+    // LỆNH SET ĐƠN VỊ MỚI
+    new SlashCommandBuilder().setName('setdonvi').setDescription('Cài đặt đơn vị (Unit) cho nhân viên')
+        .addUserOption(opt => opt.setName('user').setDescription('Chọn nhân viên').setRequired(true))
+        .addStringOption(opt => opt.setName('unit').setDescription('Tên đơn vị (VD: Traffic, SWAT, K9...)').setRequired(true)),
+    // LỆNH XEM HỒ SƠ MỚI
+    new SlashCommandBuilder().setName('hoso').setDescription('Xem hồ sơ nhân sự (Dạng ảnh)')
+        .addUserOption(opt => opt.setName('user').setDescription('Chọn người muốn xem').setRequired(true)),
+    // LỆNH BXH TUẦN/THÁNG MỚI
+    new SlashCommandBuilder().setName('bxhtuan').setDescription('Xem bảng xếp hạng theo tuần'),
+    new SlashCommandBuilder().setName('bxhthang').setDescription('Xem bảng xếp hạng theo tháng')
 ].map(command => command.toJSON());
 
 client.once(Events.ClientReady, async () => {
@@ -230,7 +252,7 @@ async function generateBoardImage(guild) {
     return canvas.toBuffer('image/png');
 }
 
-// 2. Vẽ Bảng Xếp Hạng (BXH)
+// 2. Vẽ Bảng Xếp Hạng (BXH Tổng)
 async function generateBXHImage(guild) {
     const stmt = db.prepare('SELECT * FROM users ORDER BY total_time DESC LIMIT 10'); const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
     if (users.length === 0) return null;
@@ -246,7 +268,7 @@ async function generateBXHImage(guild) {
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 100);
-    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('Bảng Xếp Hạng Nhận Sự LSPD - GtaNetWork', padding, 50);
+    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('Bảng Xếp Hạng Tổng LSPD - GtaNetWork', padding, 50);
     ctx.fillStyle = '#b5bac1'; ctx.font = '16px sans-serif'; ctx.fillText(`Tổng số nhân sự từng Online: ${totalOnline} người.`, padding, 80);
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 100, width, 50);
@@ -290,84 +312,167 @@ async function generateBXHImage(guild) {
     return canvas.toBuffer('image/png');
 }
 
-// 3. Vẽ Bảng Thống Kê (Stats)
-async function generateStatsImage(guild) {
-    const currentWeek = getWeekId();
+// 3. Vẽ Bảng Xếp Hạng Tuần/Tháng
+async function generateTimeBXHImage(guild, type = 'week') {
+    const currentId = type === 'week' ? getWeekId() : getMonthId();
+    const table = type === 'week' ? 'weekly_history' : 'monthly_history';
+    const colName = type === 'week' ? 'week_time' : 'month_time';
+    
     const query = `
-        SELECT u.*, COALESCE(w.week_time, 0) as week_time 
+        SELECT u.user_id, COALESCE(w.${colName}, 0) as calc_time, u.is_on_duty, u.start_time, u.is_on_leave, u.total_time 
         FROM users u 
-        LEFT JOIN weekly_history w ON u.user_id = w.user_id AND w.week_id = ?
-        ORDER BY u.total_time DESC
+        LEFT JOIN ${table} w ON u.user_id = w.user_id AND ${type === 'week' ? 'w.week_id' : 'w.month_id'} = ?
+        WHERE COALESCE(w.${colName}, 0) > 0 OR u.is_on_duty = 1
+        ORDER BY calc_time DESC LIMIT 10
     `;
     const stmt = db.prepare(query);
-    stmt.bind([currentWeek]);
-    const users = []; 
-    while (stmt.step()) users.push(stmt.getAsObject()); 
-    stmt.free();
+    stmt.bind([currentId]);
+    const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
     
-    const activeUsers = users.filter(u => u.total_time > 0 || u.is_on_duty === 1 || u.week_time > 0);
-    if (activeUsers.length === 0) return null;
+    if (users.length === 0) return null;
 
-    let tM = 0, tD = 0, tT = 0, oC = 0;
-    for (const u of activeUsers) {
-        tM++; tD += u.total_days;
-        if (u.is_on_duty) { oC++; tT += (u.total_time + (Date.now() - u.start_time)); } 
-        else { tT += u.total_time; }
-    }
-
-    const rowHeight = 65, headerHeight = 280, padding = 20, width = 850;
-    const height = headerHeight + (activeUsers.length * rowHeight) + padding;
+    const titleText = type === 'week' ? 'BẢNG XẾP HẠNG TUẦN NÀY' : 'BẢNG XẾP HẠNG THÁNG NÀY';
+    const rowHeight = 70, headerHeight = 150, padding = 20, width = 850;
+    const height = headerHeight + (users.length * rowHeight) + padding;
     
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
-    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 120);
-    ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('THỐNG KÊ LSPD GtaNetWork', padding, 55);
-    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; 
-    ctx.fillText(`Tổng nhân sự: ${tM}   |   Đang Online: ${oC}`, padding, 90);
-    
-    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 130, width, 100);
-    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif';
-    ctx.fillText('Tổng ngày trực:', padding, 165); 
-    ctx.fillStyle = '#dbdee1'; ctx.fillText(`${tD} ngày`, 250, 165);
-    
-    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif'; 
-    ctx.fillText('Tổng thời gian:', padding, 200); 
-    ctx.fillStyle = '#dbdee1'; ctx.fillText(`${formatTime(tT)}`, 250, 200);
+    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 100);
+    ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 34px sans-serif'; ctx.fillText(titleText, padding, 50);
+    ctx.fillStyle = '#b5bac1'; ctx.font = '16px sans-serif'; ctx.fillText(`Tính từ: ${type === 'week' ? getWeekId() : getMonthId()}`, padding, 80);
 
-    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 230, width, 50);
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 100, width, 50);
     ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 18px sans-serif';
-    ctx.fillText('TÊN NHÂN VIÊN', 80, 262);
-    ctx.fillText('TRẠNG THÁI', 380, 262);
-    ctx.fillText('TUẦN NÀY', 530, 262);
-    ctx.fillText('TỔNG CỘNG', 680, 262);
+    ctx.fillText('HẠNG', 20, 132);
+    ctx.fillText('TÊN NHÂN VIÊN', 100, 132);
+    ctx.fillText('TRẠNG THÁI', 450, 132);
+    ctx.fillText('THỜI GIAN', 630, 132);
 
     let y = headerHeight;
-    for (let i = 0; i < activeUsers.length; i++) {
-        let u = checkLeaveStatus(activeUsers[i]);
+    for (let i = 0; i < users.length; i++) {
+        let u = users[i];
         const member = await guild.members.fetch(u.user_id).catch(() => null);
         const name = member ? member.displayName : "Unknown";
         
         if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
 
-        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(name.substring(0, 18), 80, y + 40);
+        ctx.fillStyle = i === 0 ? '#FFD700' : i === 1 ? '#C0C0C0' : i === 2 ? '#CD7F32' : '#ffffff'; 
+        ctx.font = 'bold 24px sans-serif'; ctx.fillText(`#${i + 1}`, 25, y + 45);
 
-        let statusText = "OFFLINE", statusColor = "#ed4245";
-        if (u.is_on_leave) { statusText = "ON LEAVE"; statusColor = "#fee75c"; }
-        else if (u.is_on_duty) { statusText = "ON DUTY"; statusColor = "#57f287"; }
-        ctx.fillStyle = statusColor; ctx.font = 'bold 16px sans-serif'; ctx.fillText(statusText, 380, y + 40);
-
-        let weekTime = u.week_time;
-        if (u.is_on_duty) weekTime += (Date.now() - u.start_time);
-        ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(formatTime(weekTime), 530, y + 40);
-
-        let totalTime = u.total_time; 
-        if (u.is_on_duty) totalTime += (Date.now() - u.start_time);
-        ctx.fillStyle = '#dbdee1'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(formatTime(totalTime), 680, y + 40);
+        try {
+            const avatarURL = member ? member.user.displayAvatarURL({ extension: 'png', size: 64 }) : null;
+            if (avatarURL) {
+                const avatar = await loadImage(avatarURL);
+                ctx.save(); ctx.beginPath(); ctx.arc(padding + 90, y + 35, 20, 0, Math.PI * 2, true); ctx.closePath(); ctx.clip();
+                ctx.drawImage(avatar, padding + 70, y + 15, 40, 40); ctx.restore();
+            }
+        } catch (e) {}
         
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(name.substring(0, 18), 130, y + 42);
+
+        let statusText = "OFFLINE", statusColor = "#ed4245"; 
+        if (u.is_on_leave) { statusText = "ON LEAVE"; statusColor = "#fee75c"; } 
+        else if (u.is_on_duty) { statusText = "ON DUTY"; statusColor = "#57f287"; } 
+        ctx.fillStyle = statusColor; ctx.font = 'bold 18px sans-serif'; ctx.fillText(statusText, 450, y + 42);
+
+        let time = u.calc_time; if (u.is_on_duty) time += (Date.now() - u.start_time);
+        ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(formatTime(time), 630, y + 42);
         y += rowHeight;
     }
+    return canvas.toBuffer('image/png');
+}
+
+// 4. Vẽ Hồ Sơ Nhân Sự (Đã nâng cấp)
+async function generateProfileImage(targetUser, member) {
+    const currentWeek = getWeekId();
+    const currentMonth = getMonthId();
+
+    const stmt = db.prepare(`
+        SELECT u.*, COALESCE(w.week_time, 0) as week_time, COALESCE(m.month_time, 0) as month_time 
+        FROM users u 
+        LEFT JOIN weekly_history w ON u.user_id = w.user_id AND w.week_id = ?
+        LEFT JOIN monthly_history m ON u.user_id = m.user_id AND m.month_id = ?
+        WHERE u.user_id = ?
+    `);
+    stmt.bind([currentWeek, currentMonth, targetUser.id]);
+    let u = null; if (stmt.step()) u = stmt.getAsObject(); stmt.free();
+    
+    if (!u) u = { user_id: targetUser.id, is_on_duty: 0, start_time: 0, total_time: 0, total_days: 0, is_on_leave: 0, week_time: 0, month_time: 0, unit: 'Chưa cập nhật' };
+    u = checkLeaveStatus(u);
+
+    // Tự động lấy Role cao nhất của người đó làm Cấp bậc
+    let highestRole = "Chưa có";
+    if (member && member.roles.cache.size > 1) {
+        const roles = member.roles.cache.filter(r => r.id !== member.guild.id).sort((a, b) => b.position - a.position);
+        if (roles.size > 0) highestRole = roles.first().name;
+    }
+
+    const width = 800, height = 450, padding = 30;
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+
+    // Nền chính
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
+    // Thanh Header
+    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 80);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 28px sans-serif'; ctx.fillText('HỒ SƠ NHÂN SỰ LSPD', padding, 50);
+    
+    // Avatar bên trái
+    try {
+        const avatarURL = targetUser.displayAvatarURL({ extension: 'png', size: 256 });
+        const avatar = await loadImage(avatarURL);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(150, 250, 80, 0, Math.PI * 2, true); // Hình tròn bán kính 80
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(avatar, 70, 170, 160, 160);
+        ctx.restore();
+        // Viền avatar
+        ctx.strokeStyle = '#00BFFF'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(150, 250, 80, 0, Math.PI * 2, true); ctx.stroke();
+    } catch (e) {}
+
+    // Thông tin bên phải
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 36px sans-serif'; 
+    ctx.fillText(member ? member.displayName : targetUser.username, 260, 180);
+
+    ctx.fillStyle = '#b5bac1'; ctx.font = '20px sans-serif';
+    ctx.fillText(`Cấp bậc:`, 260, 230);
+    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 20px sans-serif'; // Màu vàng cho cấp bậc
+    ctx.fillText(highestRole, 370, 230);
+
+    ctx.fillStyle = '#b5bac1'; ctx.font = '20px sans-serif';
+    ctx.fillText(`Đơn vị:`, 260, 270);
+    ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 20px sans-serif'; // Màu xanh dương cho đơn vị
+    ctx.fillText(u.unit, 340, 270);
+
+    // Trạng thái
+    ctx.fillStyle = '#b5bac1'; ctx.font = '20px sans-serif';
+    ctx.fillText(`Trạng thái:`, 260, 310);
+    let statusText = "OFFLINE", statusColor = "#ed4245";
+    if (u.is_on_leave) { statusText = "ON LEAVE"; statusColor = "#fee75c"; }
+    else if (u.is_on_duty) { statusText = "ON DUTY"; statusColor = "#57f287"; }
+    ctx.fillStyle = statusColor; ctx.font = 'bold 20px sans-serif';
+    ctx.fillText(statusText, 370, 310);
+
+    // Vạch kẻ ngang
+    ctx.strokeStyle = '#333336'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(padding, 350); ctx.lineTo(width - padding, 350); ctx.stroke();
+
+    // Thống kê phía dưới
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 22px sans-serif';
+    const timeTotal = u.total_time + (u.is_on_duty ? (Date.now() - u.start_time) : 0);
+    const timeWeek = u.week_time + (u.is_on_duty ? (Date.now() - u.start_time) : 0);
+    const timeMonth = u.month_time + (u.is_on_duty ? (Date.now() - u.start_time) : 0);
+
+    ctx.fillText(`Tổng giờ trực: ${formatTime(timeTotal)}`, padding, 400);
+    ctx.fillText(`Ngày công: ${u.total_days} ngày`, 400, 400);
+
+    ctx.fillStyle = '#b5bac1'; ctx.font = '18px sans-serif';
+    ctx.fillText(`Tuần này: ${formatTime(timeWeek)}  |  Tháng này: ${formatTime(timeMonth)}`, padding, 435);
+
     return canvas.toBuffer('image/png');
 }
 
@@ -427,7 +532,6 @@ async function updateDutyBoard(channel) {
 }
 
 client.on(Events.InteractionCreate, async interaction => {
-    // XỬ LÝ LỆNH SLASH
     if (interaction.isChatInputCommand()) {
         if (!isDbReady) return interaction.reply({ content: "Đang khởi động!", ephemeral: true });
         
@@ -438,7 +542,7 @@ client.on(Events.InteractionCreate, async interaction => {
             return interaction.reply({ content: "❌ Chỉ Admin Bot hoặc Admin Server mới có quyền sử dụng lệnh này!", ephemeral: true });
         }
 
-        const { commandName, options, channel } = interaction;
+        const { commandName, options, channel, guild } = interaction;
 
         if (commandName === 'settime') {
             const targetUser = options.getUser('user'); const startTime = options.getString('start'); const endTime = options.getString('end');
@@ -450,8 +554,8 @@ client.on(Events.InteractionCreate, async interaction => {
         if (commandName === 'setupduty') { config.dutyChannelId = channel.id; saveConfig(); return interaction.reply(`✅ Đã đặt kênh Log On/Off.`); }
         if (commandName === 'setupwarning') { config.warningChannelId = channel.id; saveConfig(); return interaction.reply(`✅ Đã đặt kênh Cảnh báo.`); }
         if (commandName === 'setupleave') { config.leaveChannelId = channel.id; saveConfig(); return interaction.reply(`✅ Đã đặt kênh Nghỉ phép.`); }
-        if (commandName === 'resetuser') { const targetUser = options.getUser('user'); db.run('DELETE FROM users WHERE user_id = ?', [targetUser.id]); db.run('DELETE FROM history WHERE user_id = ?', [targetUser.id]); db.run('DELETE FROM weekly_history WHERE user_id = ?', [targetUser.id]); saveDatabase(); if (config.boardChannelId) updateDutyBoard(client.channels.cache.get(config.boardChannelId)); return interaction.reply(`✅ Đã xóa dữ liệu của <@${targetUser.id}>.`); }
-        if (commandName === 'resetdata') { db.run('DELETE FROM users'); db.run('DELETE FROM history'); db.run('DELETE FROM weekly_history'); saveDatabase(); if (config.boardChannelId) updateDutyBoard(client.channels.cache.get(config.boardChannelId)); return interaction.reply("💥 **ĐÃ RESET TOÀN BỘ DỮ LIỆU!**"); }
+        if (commandName === 'resetuser') { const targetUser = options.getUser('user'); db.run('DELETE FROM users WHERE user_id = ?', [targetUser.id]); db.run('DELETE FROM history WHERE user_id = ?', [targetUser.id]); db.run('DELETE FROM weekly_history WHERE user_id = ?', [targetUser.id]); db.run('DELETE FROM monthly_history WHERE user_id = ?', [targetUser.id]); saveDatabase(); if (config.boardChannelId) updateDutyBoard(client.channels.cache.get(config.boardChannelId)); return interaction.reply(`✅ Đã xóa dữ liệu của <@${targetUser.id}>.`); }
+        if (commandName === 'resetdata') { db.run('DELETE FROM users'); db.run('DELETE FROM history'); db.run('DELETE FROM weekly_history'); db.run('DELETE FROM monthly_history'); saveDatabase(); if (config.boardChannelId) updateDutyBoard(client.channels.cache.get(config.boardChannelId)); return interaction.reply("💥 **ĐÃ RESET TOÀN BỘ DỮ LIỆU!**"); }
         
         if (commandName === 'resetnghi') {
             const targetUser = options.getUser('user');
@@ -465,17 +569,10 @@ client.on(Events.InteractionCreate, async interaction => {
             const stmtUsers = db.prepare('SELECT * FROM users'); const users = []; while (stmtUsers.step()) users.push(stmtUsers.getAsObject()); stmtUsers.free();
             const stmtHistory = db.prepare('SELECT * FROM history'); const history = []; while (stmtHistory.step()) history.push(stmtHistory.getAsObject()); stmtHistory.free();
             const stmtWeek = db.prepare('SELECT * FROM weekly_history'); const week = []; while (stmtWeek.step()) week.push(stmtWeek.getAsObject()); stmtWeek.free();
+            const stmtMonth = db.prepare('SELECT * FROM monthly_history'); const month = []; while (stmtMonth.step()) month.push(stmtMonth.getAsObject()); stmtMonth.free();
             const stmtBlacklist = db.prepare('SELECT * FROM blacklist'); const blacklist = []; while (stmtBlacklist.step()) blacklist.push(stmtBlacklist.getAsObject()); stmtBlacklist.free();
             
-            const backupData = { 
-                config, 
-                users, 
-                history, 
-                week, 
-                blacklist,
-                exportDate: new Date().toISOString() 
-            };
-            
+            const backupData = { config, users, history, week, month, blacklist, exportDate: new Date().toISOString() };
             fs.writeFileSync('backup.json', JSON.stringify(backupData, null, 2));
             
             await interaction.deferReply({ ephemeral: true });
@@ -500,30 +597,17 @@ client.on(Events.InteractionCreate, async interaction => {
                 res.on('end', () => {
                     try {
                         const backup = JSON.parse(data);
-                        
-                        if (backup.config) {
-                            config = backup.config;
-                            saveConfig();
-                        }
-
-                        db.run('DELETE FROM users'); db.run('DELETE FROM history'); db.run('DELETE FROM weekly_history'); db.run('DELETE FROM blacklist');
-                        if (backup.users) { for (const u of backup.users) { db.run(`INSERT INTO users (user_id, is_on_duty, start_time, total_time, total_days, is_on_leave, leave_date, schedule_start, schedule_end, has_warned_schedule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [u.user_id, u.is_on_duty, u.start_time, u.total_time, u.total_days, u.is_on_leave, u.leave_date, u.schedule_start, u.schedule_end, u.has_warned_schedule]); } }
+                        if (backup.config) { config = backup.config; saveConfig(); }
+                        db.run('DELETE FROM users'); db.run('DELETE FROM history'); db.run('DELETE FROM weekly_history'); db.run('DELETE FROM monthly_history'); db.run('DELETE FROM blacklist');
+                        if (backup.users) { for (const u of backup.users) { db.run(`INSERT INTO users (user_id, is_on_duty, start_time, total_time, total_days, is_on_leave, leave_date, schedule_start, schedule_end, has_warned_schedule, unit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [u.user_id, u.is_on_duty, u.start_time, u.total_time, u.total_days, u.is_on_leave, u.leave_date, u.schedule_start, u.schedule_end, u.has_warned_schedule, u.unit || "Chưa cập nhật"]); } }
                         if (backup.history) { for (const h of backup.history) db.run(`INSERT INTO history (user_id, date) VALUES (?, ?)`, [h.user_id, h.date]); }
                         if (backup.week) { for (const w of backup.week) db.run(`INSERT INTO weekly_history (user_id, week_id, week_time) VALUES (?, ?, ?)`, [w.user_id, w.week_id, w.week_time]); }
+                        if (backup.month) { for (const m of backup.month) db.run(`INSERT INTO monthly_history (user_id, month_id, month_time) VALUES (?, ?, ?)`, [m.user_id, m.month_id, m.month_time]); }
                         if (backup.blacklist) { for (const b of backup.blacklist) db.run(`INSERT INTO blacklist (user_id, reason, banned_by, date) VALUES (?, ?, ?, ?)`, [b.user_id, b.reason, b.banned_by, b.date]); }
-                        
                         saveDatabase(); 
-                        
-                        if (config.boardChannelId) {
-                            const bChannel = client.channels.cache.get(config.boardChannelId);
-                            if (bChannel) updateDutyBoard(bChannel);
-                        }
-
+                        if (config.boardChannelId) { const bChannel = client.channels.cache.get(config.boardChannelId); if (bChannel) updateDutyBoard(bChannel); }
                         interaction.editReply(`✅ **NHẬP DỮ LIỆU VÀ CẤU HÌNH THÀNH CÔNG!**`);
-                    } catch (e) { 
-                        console.error(e);
-                        interaction.editReply("❌ Lỗi định dạng file JSON."); 
-                    }
+                    } catch (e) { console.error(e); interaction.editReply("❌ Lỗi định dạng file JSON."); }
                 });
             }).on("error", () => interaction.editReply("❌ Lỗi tải file."));
             return;
@@ -533,17 +617,8 @@ client.on(Events.InteractionCreate, async interaction => {
             const presence = options.getString('presence');
             const type = options.getString('type');
             const text = options.getString('text');
-            
-            const activityTypes = {
-                'PLAYING': ActivityType.Playing,
-                'WATCHING': ActivityType.Watching,
-                'LISTENING': ActivityType.Listening
-            };
-
-            client.user.setPresence({
-                status: presence,
-                activities: [{ name: text, type: activityTypes[type] }]
-            });
+            const activityTypes = { 'PLAYING': ActivityType.Playing, 'WATCHING': ActivityType.Watching, 'LISTENING': ActivityType.Listening };
+            client.user.setPresence({ status: presence, activities: [{ name: text, type: activityTypes[type] }] });
             return interaction.reply({ content: `✅ Đã đổi trạng thái thành **${presence.toUpperCase()}** | **${type} ${text}**`, ephemeral: true });
         }
 
@@ -551,61 +626,81 @@ client.on(Events.InteractionCreate, async interaction => {
             const targetChannel = options.getChannel('channel');
             const messageContent = options.getString('message');
             const imageAttachment = options.getAttachment('image');
-
             try {
                 const payload = {};
                 if (messageContent) payload.content = messageContent;
                 if (imageAttachment) payload.files = [{ attachment: imageAttachment.url, name: imageAttachment.name }];
-
-                if (!payload.content && !payload.files) {
-                    return interaction.reply({ content: "❌ Bạn phải nhập nội dung tin nhắn hoặc đính kèm file!", ephemeral: true });
-                }
-
+                if (!payload.content && !payload.files) return interaction.reply({ content: "❌ Bạn phải nhập nội dung tin nhắn hoặc đính kèm file!", ephemeral: true });
                 await targetChannel.send(payload);
                 return interaction.reply({ content: `✅ Đã gửi tin nhắn tới <#${targetChannel.id}>.`, ephemeral: true });
-            } catch (e) {
-                return interaction.reply({ content: `❌ Không thể gửi tin nhắn tới kênh này (Có thể bot thiếu quyền).`, ephemeral: true });
-            }
+            } catch (e) { return interaction.reply({ content: `❌ Không thể gửi tin nhắn tới kênh này (Có thể bot thiếu quyền).`, ephemeral: true }); }
         }
 
         if (commandName === 'blacklist') {
             const targetUser = options.getUser('user');
             const reason = options.getString('reason');
             const targetChannel = options.getChannel('channel') || (config.warningChannelId ? client.channels.cache.get(config.warningChannelId) : client.channels.cache.get(config.boardChannelId));
-
-            if (!targetChannel) {
-                return interaction.reply({ content: "❌ Không tìm thấy kênh thông báo. Hãy setup kênh Cảnh báo trước!", ephemeral: true });
-            }
+            if (!targetChannel) return interaction.reply({ content: "❌ Không tìm thấy kênh thông báo. Hãy setup kênh Cảnh báo trước!", ephemeral: true });
 
             const now = new Date();
             const dateStr = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
             db.run('INSERT OR REPLACE INTO blacklist (user_id, reason, banned_by, date) VALUES (?, ?, ?, ?)', [targetUser.id, reason, "Chief Of Police", dateStr]);
             saveDatabase();
 
-            const blacklistEmbed = new EmbedBuilder()
-                .setTitle('🚫 THÔNG BÁO BLACKLIST (DANH SÁCH ĐEN)')
-                .setDescription(`**Đối tượng:** <@${targetUser.id}>\n**Lý do:** ${reason}\n**Người xử lý:** Chief Of Police\n**Thời gian:** ${dateStr}`)
-                .setColor(0xFF0000) 
-                .setThumbnail(targetUser.displayAvatarURL())
-                .setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' })
-                .setTimestamp();
-
+            const blacklistEmbed = new EmbedBuilder().setTitle('🚫 THÔNG BÁO BLACKLIST (DANH SÁCH ĐEN)').setDescription(`**Đối tượng:** <@${targetUser.id}>\n**Lý do:** ${reason}\n**Người xử lý:** Chief Of Police\n**Thời gian:** ${dateStr}`).setColor(0xFF0000).setThumbnail(targetUser.displayAvatarURL()).setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' }).setTimestamp();
             await targetChannel.send({ embeds: [blacklistEmbed] });
 
-            try {
-                const dmEmbed = new EmbedBuilder()
-                    .setTitle('🚫 BẠN ĐÃ BỊ ĐƯA VÀO DANH SÁCH ĐEN')
-                    .setDescription(`Bạn đã bị **Chief Of Police** đưa vào danh sách đen.\n**Lý do:** ${reason}`)
-                    .setColor(0xFF0000)
-                    .setTimestamp();
-                await targetUser.send({ embeds: [dmEmbed] });
-            } catch (e) {}
-
+            try { const dmEmbed = new EmbedBuilder().setTitle('🚫 BẠN ĐÃ BỊ ĐƯA VÀO DANH SÁCH ĐEN').setDescription(`Bạn đã bị **Chief Of Police** đưa vào danh sách đen.\n**Lý do:** ${reason}`).setColor(0xFF0000).setTimestamp(); await targetUser.send({ embeds: [dmEmbed] }); } catch (e) {}
             return interaction.reply({ content: `✅ Đã đưa <@${targetUser.id}> vào danh sách đen và thông báo tới <#${targetChannel.id}>.`, ephemeral: true });
+        }
+
+        // LỆNH SET ĐƠN VỊ
+        if (commandName === 'setdonvi') {
+            const targetUser = options.getUser('user');
+            const unitName = options.getString('unit');
+            getOrCreateUser(targetUser.id);
+            db.run('UPDATE users SET unit = ? WHERE user_id = ?', [unitName, targetUser.id]);
+            saveDatabase();
+            return interaction.reply({ content: `✅ Đã set đơn vị cho <@${targetUser.id}> thành **${unitName}**.` });
+        }
+
+        // LỆNH XEM HỒ SƠ
+        if (commandName === 'hoso') {
+            await interaction.deferReply();
+            const targetUser = options.getUser('user');
+            const member = await guild.members.fetch(targetUser.id).catch(() => null);
+            if (!member) return interaction.editReply("❌ Không tìm thấy người này trong server.");
+
+            try {
+                const buffer = await generateProfileImage(targetUser, member);
+                const attachment = new AttachmentBuilder(buffer, { name: 'hoso.png' });
+                return interaction.editReply({ files: [attachment] });
+            } catch (e) { return interaction.editReply("❌ Lỗi khi tạo ảnh hồ sơ."); }
+        }
+
+        // LỆNH BXH TUẦN
+        if (commandName === 'bxhtuan') {
+            await interaction.deferReply();
+            try {
+                const buffer = await generateTimeBXHImage(guild, 'week');
+                if (!buffer) return interaction.editReply("Tuần này chưa có ai trực.");
+                const attachment = new AttachmentBuilder(buffer, { name: 'bxhtuan.png' });
+                return interaction.editReply({ files: [attachment] });
+            } catch (e) { return interaction.editReply("Lỗi khi tạo ảnh BXH Tuần."); }
+        }
+
+        // LỆNH BXH THÁNG
+        if (commandName === 'bxhthang') {
+            await interaction.deferReply();
+            try {
+                const buffer = await generateTimeBXHImage(guild, 'month');
+                if (!buffer) return interaction.editReply("Tháng này chưa có ai trực.");
+                const attachment = new AttachmentBuilder(buffer, { name: 'bxhthang.png' });
+                return interaction.editReply({ files: [attachment] });
+            } catch (e) { return interaction.editReply("Lỗi khi tạo ảnh BXH Tháng."); }
         }
     }
 
-    // XỬ LÝ NÚT BẤM
     if (!interaction.isButton()) return;
     if (!isDbReady) return interaction.reply({ content: "Hệ thống đang khởi động!", ephemeral: true });
 
@@ -625,110 +720,57 @@ client.on(Events.InteractionCreate, async interaction => {
         const timeStr = now.toLocaleTimeString('vi-VN', { hour12: false, timeZone: 'Asia/Ho_Chi_Minh' });
         const dateStr = now.toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
 
-        const leaveEmbed = new EmbedBuilder()
-            .setTitle('📩 ĐƠN XIN NGHỈ PHÉP MỚI')
-            .setDescription(`**Nhân viên:** <@${interaction.user.id}>\n**Thời gian gửi:** ${timeStr} - ${dateStr}\n\nVui lòng Admin xem xét và bấm nút bên dưới để duyệt.`)
-            .setColor(0xFFA500) 
-            .setThumbnail(interaction.user.displayAvatarURL())
-            .setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' })
-            .setTimestamp();
-
-        if(logLeaveChannel) {
-            await logLeaveChannel.send({ embeds: [leaveEmbed], components: [row] });
-        }
+        const leaveEmbed = new EmbedBuilder().setTitle('📩 ĐƠN XIN NGHỈ PHÉP MỚI').setDescription(`**Nhân viên:** <@${interaction.user.id}>\n**Thời gian gửi:** ${timeStr} - ${dateStr}\n\nVui lòng Admin xem xét và bấm nút bên dưới để duyệt.`).setColor(0xFFA500).setThumbnail(interaction.user.displayAvatarURL()).setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' }).setTimestamp();
+        if(logLeaveChannel) await logLeaveChannel.send({ embeds: [leaveEmbed], components: [row] });
         return interaction.reply({ content: "✅ Đã gửi đơn xin nghỉ đến Admin.", ephemeral: true });
     }
 
-    // XỬ LÝ DUYỆT ĐƠN XIN NGHỈ
     if (interaction.customId.startsWith('approve_leave_')) {
-        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            return interaction.reply({ content: "❌ Chỉ Admin Server mới có quyền duyệt đơn xin nghỉ!", ephemeral: true });
-        }
+        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) return interaction.reply({ content: "❌ Chỉ Admin Server mới có quyền duyệt đơn xin nghỉ!", ephemeral: true });
 
         const targetId = interaction.customId.split('_')[2];
         const now = new Date();
         const dateStr = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
-
         const today = new Date().toISOString().split('T')[0]; 
-        db.run('UPDATE users SET is_on_leave = 1, leave_date = ? WHERE user_id = ?', [today, targetId]); 
-        saveDatabase();
+        db.run('UPDATE users SET is_on_leave = 1, leave_date = ? WHERE user_id = ?', [today, targetId]); saveDatabase();
 
         try { 
             const u = await client.users.fetch(targetId); 
-            const dmEmbed = new EmbedBuilder()
-                .setTitle('✅ ĐƠN XIN NGHỈ ĐÃ ĐƯỢC DUYỆT')
-                .setDescription(`**Chào ${u.username},**\n\nĐơn xin nghỉ phép của bạn đã được **Chief Of Police** phê duyệt thành công.\n\n**Thời gian duyệt:** ${dateStr}\n**Trạng thái:** Được phép nghỉ phép\n\n*Chúc bạn có một ngày nghỉ vui vẻ! Hệ thống sẽ tự động mở khóa On Duty vào 00:00 ngày mai.*`)
-                .setColor(0x00FF00)
-                .setThumbnail(u.displayAvatarURL())
-                .setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' })
-                .setTimestamp();
+            const dmEmbed = new EmbedBuilder().setTitle('✅ ĐƠN XIN NGHỈ ĐÃ ĐƯỢC DUYỆT').setDescription(`**Chào ${u.username},**\n\nĐơn xin nghỉ phép của bạn đã được **Chief Of Police** phê duyệt thành công.\n\n**Thời gian duyệt:** ${dateStr}\n**Trạng thái:** Được phép nghỉ phép\n\n*Chúc bạn có một ngày nghỉ vui vẻ! Hệ thống sẽ tự động mở khóa On Duty vào 00:00 ngày mai.*`).setColor(0x00FF00).setThumbnail(u.displayAvatarURL()).setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' }).setTimestamp();
             await u.send({ embeds: [dmEmbed] }); 
-        } catch (e) { console.log("Không thể gửi DM."); }
-
+        } catch (e) {}
         return interaction.update({ content: `✅ **${interaction.user.username}** đã duyệt đơn xin nghỉ cho <@${targetId}>.`, embeds: [], components: [] });
     }
 
-    // XỬ LÝ TỪ CHỐI ĐƠN XIN NGHỈ (BẬT FORM NHẬP LÝ DO)
     if (interaction.customId.startsWith('deny_leave_')) {
-        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            return interaction.reply({ content: "❌ Chỉ Admin Server mới có quyền từ chối đơn xin nghỉ!", ephemeral: true });
-        }
+        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) return interaction.reply({ content: "❌ Chỉ Admin Server mới có quyền từ chối đơn xin nghỉ!", ephemeral: true });
 
         const targetId = interaction.customId.split('_')[2];
-
-        const modal = new ModalBuilder()
-            .setCustomId(`deny_leave_modal_${targetId}`)
-            .setTitle('Từ chối đơn xin nghỉ phép');
-
-        const reasonInput = new TextInputBuilder()
-            .setCustomId('deny_reason')
-            .setLabel('Nhập lý do từ chối')
-            .setStyle(TextInputStyle.Paragraph)
-            .setPlaceholder('VD: Server đang thiếu người, không thể nghỉ lúc này...')
-            .setRequired(true);
-
-        const actionRow = new ActionRowBuilder().addComponents(reasonInput);
-        modal.addComponents(actionRow);
-
+        const modal = new ModalBuilder().setCustomId(`deny_leave_modal_${targetId}`).setTitle('Từ chối đơn xin nghỉ phép');
+        const reasonInput = new TextInputBuilder().setCustomId('deny_reason').setLabel('Nhập lý do từ chối').setStyle(TextInputStyle.Paragraph).setPlaceholder('VD: Server đang thiếu người, không thể nghỉ lúc này...').setRequired(true);
+        modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
         await interaction.showModal(modal);
         return;
     }
 
-    // XỬ LÝ KHI ADMIN GỬI FORM LÝ DO TỪ CHỐI
     if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('deny_leave_modal_')) {
         const targetId = interaction.customId.split('_')[3];
         const reason = interaction.fields.getTextInputValue('deny_reason');
-        
         const now = new Date();
         const dateStr = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
 
         try { 
             const u = await client.users.fetch(targetId); 
-            const dmEmbed = new EmbedBuilder()
-                .setTitle('❌ ĐƠN XIN NGHỈ BỊ TỪ CHỐI')
-                .setDescription(`**Chào ${u.username},**\n\nRất tiếc, đơn xin nghỉ phép của bạn đã bị **Chief Of Police** từ chối.\n\n**Thời gian xử lý:** ${dateStr}\n**Lý do:** ${reason}\n\n*Vui lòng tiếp tục công việc bình thường.*`)
-                .setColor(0xFF0000)
-                .setThumbnail(u.displayAvatarURL())
-                .setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' })
-                .setTimestamp();
+            const dmEmbed = new EmbedBuilder().setTitle('❌ ĐƠN XIN NGHỈ BỊ TỪ CHỐI').setDescription(`**Chào ${u.username},**\n\nRất tiếc, đơn xin nghỉ phép của bạn đã bị **Chief Of Police** từ chối.\n\n**Thời gian xử lý:** ${dateStr}\n**Lý do:** ${reason}\n\n*Vui lòng tiếp tục công việc bình thường.*`).setColor(0xFF0000).setThumbnail(u.displayAvatarURL()).setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' }).setTimestamp();
             await u.send({ embeds: [dmEmbed] }); 
-        } catch (e) { console.log("Không thể gửi DM."); }
-
+        } catch (e) {}
         return interaction.update({ content: `❌ **${interaction.user.username}** đã từ chối đơn xin nghỉ của <@${targetId}>.\n**Lý do:** ${reason}`, embeds: [], components: [] });
     }
 
     if (interaction.customId === 'onduty_btn' || interaction.customId === 'offduty_btn' || interaction.customId === 'leave_btn') {
-        if (isBlacklisted(interaction.user.id)) {
-            return interaction.reply({ content: "🚫 Bạn đang nằm trong danh sách đen (Blacklist) của Server. Không thể thực hiện hành động này!", ephemeral: true });
-        }
-        
+        if (isBlacklisted(interaction.user.id)) return interaction.reply({ content: "🚫 Bạn đang nằm trong danh sách đen (Blacklist) của Server. Không thể thực hiện hành động này!", ephemeral: true });
         if (REQUIRED_ROLE_ID && REQUIRED_ROLE_ID !== 'ĐIỀN_ID_ROLE_VÀO_ĐÂY') {
-            if (!interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
-                return interaction.reply({ 
-                    content: "❌ Bạn không có Role nhân sự, không thể bấm On/Off Duty!", 
-                    ephemeral: true 
-                });
-            }
+            if (!interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) return interaction.reply({ content: "❌ Bạn không có Role nhân sự, không thể bấm On/Off Duty!", ephemeral: true });
         }
     }
 
@@ -737,6 +779,7 @@ client.on(Events.InteractionCreate, async interaction => {
     const user = getOrCreateUser(interaction.user.id);
     const voiceChannel = interaction.member.voice.channel;
     const currentWeek = getWeekId();
+    const currentMonth = getMonthId();
 
     if (interaction.customId === 'onduty_btn') {
         if (user.is_on_leave === 1) return interaction.reply({ content: "❌ Đang nghỉ phép!", ephemeral: true });
@@ -762,15 +805,19 @@ client.on(Events.InteractionCreate, async interaction => {
         
         db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = ? WHERE user_id = ?', [newTotal, user.user_id]); 
         
+        // Cập nhật Tuần
         const weekStmt = db.prepare('SELECT * FROM weekly_history WHERE user_id = ? AND week_id = ?');
         weekStmt.bind([user.user_id, currentWeek]);
-        if (weekStmt.step()) {
-            const currentWeekTime = weekStmt.getAsObject().week_time;
-            db.run('UPDATE weekly_history SET week_time = ? WHERE user_id = ? AND week_id = ?', [currentWeekTime + sessionTime, user.user_id, currentWeek]);
-        } else {
-            db.run('INSERT INTO weekly_history (user_id, week_id, week_time) VALUES (?, ?, ?)', [user.user_id, currentWeek, sessionTime]);
-        }
+        if (weekStmt.step()) { const currentWeekTime = weekStmt.getAsObject().week_time; db.run('UPDATE weekly_history SET week_time = ? WHERE user_id = ? AND week_id = ?', [currentWeekTime + sessionTime, user.user_id, currentWeek]); } 
+        else { db.run('INSERT INTO weekly_history (user_id, week_id, week_time) VALUES (?, ?, ?)', [user.user_id, currentWeek, sessionTime]); }
         weekStmt.free();
+
+        // Cập nhật Tháng
+        const monthStmt = db.prepare('SELECT * FROM monthly_history WHERE user_id = ? AND month_id = ?');
+        monthStmt.bind([user.user_id, currentMonth]);
+        if (monthStmt.step()) { const currentMonthTime = monthStmt.getAsObject().month_time; db.run('UPDATE monthly_history SET month_time = ? WHERE user_id = ? AND month_id = ?', [currentMonthTime + sessionTime, user.user_id, currentMonth]); } 
+        else { db.run('INSERT INTO monthly_history (user_id, month_id, month_time) VALUES (?, ?, ?)', [user.user_id, currentMonth, sessionTime]); }
+        monthStmt.free();
         saveDatabase();
         
         await interaction.reply({ content: `Đã kết thúc ca. Ca này: **${formatTime(sessionTime)}**`, ephemeral: true });
@@ -822,18 +869,21 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     if (user.is_on_duty && oldState.channelId && !newState.channelId && user.is_on_leave !== 1) {
         const sT = Date.now() - user.start_time;
         const currentWeek = getWeekId();
+        const currentMonth = getMonthId();
         
         db.run('UPDATE users SET is_on_duty = 0, start_time = 0, total_time = total_time + ? WHERE user_id = ?', [sT, oldState.id]); 
         
         const weekStmt = db.prepare('SELECT * FROM weekly_history WHERE user_id = ? AND week_id = ?');
         weekStmt.bind([oldState.id, currentWeek]);
-        if (weekStmt.step()) {
-            const currentWeekTime = weekStmt.getAsObject().week_time;
-            db.run('UPDATE weekly_history SET week_time = ? WHERE user_id = ? AND week_id = ?', [currentWeekTime + sT, oldState.id, currentWeek]);
-        } else {
-            db.run('INSERT INTO weekly_history (user_id, week_id, week_time) VALUES (?, ?, ?)', [oldState.id, currentWeek, sT]);
-        }
+        if (weekStmt.step()) { const currentWeekTime = weekStmt.getAsObject().week_time; db.run('UPDATE weekly_history SET week_time = ? WHERE user_id = ? AND week_id = ?', [currentWeekTime + sT, oldState.id, currentWeek]); } 
+        else { db.run('INSERT INTO weekly_history (user_id, week_id, week_time) VALUES (?, ?, ?)', [oldState.id, currentWeek, sT]); }
         weekStmt.free();
+
+        const monthStmt = db.prepare('SELECT * FROM monthly_history WHERE user_id = ? AND month_id = ?');
+        monthStmt.bind([oldState.id, currentMonth]);
+        if (monthStmt.step()) { const currentMonthTime = monthStmt.getAsObject().month_time; db.run('UPDATE monthly_history SET month_time = ? WHERE user_id = ? AND month_id = ?', [currentMonthTime + sT, oldState.id, currentMonth]); } 
+        else { db.run('INSERT INTO monthly_history (user_id, month_id, month_time) VALUES (?, ?, ?)', [oldState.id, currentMonth, sT]); }
+        monthStmt.free();
         saveDatabase();
 
         const wC = config.warningChannelId ? client.channels.cache.get(config.warningChannelId) : client.channels.cache.get(config.boardChannelId);
