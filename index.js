@@ -14,10 +14,9 @@ const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const ADMIN_ID = '1498554147304247296'; 
 
 // ==========================================
-// ID ROLE BẮT BUỘC (Nếu điền ID, chỉ ai có role này mới bấm On/Off được)
-// Nếu không muốn giới hạn, hãy để trống ''
+// ID ROLE BẮT BUỘC (Để trống nếu không cần)
 // ==========================================
-const REQUIRED_ROLE_ID = '1568699055561904198'; 
+const REQUIRED_ROLE_ID = 'ĐIỀN_ID_ROLE_VÀO_ĐÂY'; 
 // ==========================================
 
 let config = { dutyChannelId: null, warningChannelId: null, leaveChannelId: null, boardChannelId: null };
@@ -43,6 +42,10 @@ async function initDatabase() {
             has_warned_schedule INTEGER DEFAULT 0
         )`);
         
+        db.run(`CREATE TABLE IF NOT EXISTS blacklist (
+            user_id TEXT PRIMARY KEY, reason TEXT, banned_by TEXT, date TEXT
+        )`);
+        
         try { db.run('ALTER TABLE users ADD COLUMN total_days INTEGER DEFAULT 0'); } catch (e) {}
         try { db.run('ALTER TABLE users ADD COLUMN is_on_leave INTEGER DEFAULT 0'); } catch (e) {}
         try { db.run('ALTER TABLE users ADD COLUMN leave_date TEXT DEFAULT NULL'); } catch (e) {}
@@ -62,6 +65,15 @@ async function initDatabase() {
 }
 
 function saveDatabase() { if (db) { try { fs.writeFileSync('duty.db', Buffer.from(db.export())); } catch (e) {} } }
+
+function isBlacklisted(userId) {
+    if (!isDbReady) return false;
+    const stmt = db.prepare('SELECT * FROM blacklist WHERE user_id = ?');
+    stmt.bind([userId]);
+    const exists = stmt.step();
+    stmt.free();
+    return exists;
+}
 
 function getWeekId() {
     try {
@@ -125,7 +137,7 @@ const commands = [
     new SlashCommandBuilder().setName('resetuser').setDescription('Reset dữ liệu 1 người').addUserOption(opt => opt.setName('user').setDescription('Chọn nhân viên').setRequired(true)),
     new SlashCommandBuilder().setName('resetdata').setDescription('Xóa sạch toàn bộ dữ liệu'),
     new SlashCommandBuilder().setName('resetnghi').setDescription('Gỡ trạng thái nghỉ phép cho nhân viên').addUserOption(opt => opt.setName('user').setDescription('Chọn nhân viên').setRequired(true)),
-    new SlashCommandBuilder().setName('export').setDescription('Xuất file sao lưu (Gửi qua DM)'),
+    new SlashCommandBuilder().setName('export').setDescription('Xuất file sao lưu (Cấu hình + Dữ liệu)'),
     new SlashCommandBuilder().setName('import').setDescription('Nhập file sao lưu').addAttachmentOption(opt => opt.setName('file').setDescription('File json').setRequired(true)),
     new SlashCommandBuilder().setName('setstatus').setDescription('Đổi trạng thái của Bot')
         .addStringOption(opt => opt.setName('presence').setDescription('Trạng thái hoạt động').setRequired(true).addChoices(
@@ -143,7 +155,11 @@ const commands = [
     new SlashCommandBuilder().setName('chat').setDescription('Gửi tin nhắn/ảnh thay mặt bot')
         .addChannelOption(opt => opt.setName('channel').setDescription('Chọn kênh muốn gửi').addChannelTypes(ChannelType.GuildText).setRequired(true))
         .addStringOption(opt => opt.setName('message').setDescription('Nội dung tin nhắn (Có thể bỏ trống nếu chỉ gửi ảnh)').setRequired(false))
-        .addAttachmentOption(opt => opt.setName('image').setDescription('Đính kèm ảnh/file (Không bắt buộc)').setRequired(false))
+        .addAttachmentOption(opt => opt.setName('image').setDescription('Đính kèm ảnh/file (Không bắt buộc)').setRequired(false)),
+    new SlashCommandBuilder().setName('blacklist').setDescription('Đưa một nhân viên vào danh sách đen (Cấm On Duty)')
+        .addUserOption(opt => opt.setName('user').setDescription('Chọn người bị phạt').setRequired(true))
+        .addStringOption(opt => opt.setName('reason').setDescription('Lý do vi phạm').setRequired(true))
+        .addChannelOption(opt => opt.setName('channel').setDescription('Kênh muốn gửi thông báo (Bỏ trống sẽ gửi vào kênh Cảnh báo)').addChannelTypes(ChannelType.GuildText).setRequired(false))
 ].map(command => command.toJSON());
 
 client.once(Events.ClientReady, async () => {
@@ -411,7 +427,6 @@ async function updateDutyBoard(channel) {
 }
 
 client.on(Events.InteractionCreate, async interaction => {
-    // KIỂM TRA QUYỀN: CHỈ ADMIN BOT HOẶC ADMIN SERVER
     if (interaction.isChatInputCommand()) {
         if (!isDbReady) return interaction.reply({ content: "Đang khởi động!", ephemeral: true });
         
@@ -445,17 +460,30 @@ client.on(Events.InteractionCreate, async interaction => {
             return interaction.reply({ content: `✅ Đã gỡ trạng thái nghỉ phép cho <@${targetUser.id}>. Người này có thể On Duty trở lại.` });
         }
 
+        // LỆNH EXPORT (CẤU HÌNH + DỮ LIỆU)
         if (commandName === 'export') {
             const stmtUsers = db.prepare('SELECT * FROM users'); const users = []; while (stmtUsers.step()) users.push(stmtUsers.getAsObject()); stmtUsers.free();
             const stmtHistory = db.prepare('SELECT * FROM history'); const history = []; while (stmtHistory.step()) history.push(stmtHistory.getAsObject()); stmtHistory.free();
             const stmtWeek = db.prepare('SELECT * FROM weekly_history'); const week = []; while (stmtWeek.step()) week.push(stmtWeek.getAsObject()); stmtWeek.free();
-            fs.writeFileSync('backup.json', JSON.stringify({ users, history, week, exportDate: new Date().toISOString() }, null, 2));
+            const stmtBlacklist = db.prepare('SELECT * FROM blacklist'); const blacklist = []; while (stmtBlacklist.step()) blacklist.push(stmtBlacklist.getAsObject()); stmtBlacklist.free();
+            
+            // GOM CHUNG CẢ CONFIG VÀ DATABASE
+            const backupData = { 
+                config, 
+                users, 
+                history, 
+                week, 
+                blacklist,
+                exportDate: new Date().toISOString() 
+            };
+            
+            fs.writeFileSync('backup.json', JSON.stringify(backupData, null, 2));
             
             await interaction.deferReply({ ephemeral: true });
             try {
                 if (ADMIN_ID !== 'ĐIỀN_ID_ADMIN_VÀO_ĐÂY' && ADMIN_ID) {
                     const adminUser = await client.users.fetch(ADMIN_ID);
-                    await adminUser.send({ content: `📦 **FILE SAO LƯU DỮ LIỆU BOT**`, files: [{ attachment: 'backup.json', name: 'backup_dutylist.json' }] });
+                    await adminUser.send({ content: `📦 **FILE SAO LƯU TOÀN BỘ (Cấu hình + Dữ liệu)**`, files: [{ attachment: 'backup.json', name: 'backup_dutylist.json' }] });
                     return interaction.editReply({ content: `✅ Đã gửi file sao lưu qua tin nhắn riêng của bạn!` });
                 } else {
                     return interaction.editReply({ content: `❌ Lỗi: Chưa cài đặt ADMIN_ID trong code để nhận file!`, files: [{ attachment: 'backup.json', name: 'backup_dutylist.json' }] });
@@ -464,6 +492,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 return interaction.editReply({ content: `❌ Không thể gửi tin nhắn riêng cho Admin (Có thể Admin đã chặn DM). Dưới đây là file trực tiếp:`, files: [{ attachment: 'backup.json', name: 'backup_dutylist.json' }] });
             }
         }
+
+        // LỆNH IMPORT (KHÔI PHỤC CẢ CẤU HÌNH LẪN DỮ LIỆU)
         if (commandName === 'import') {
             const attachment = options.getAttachment('file');
             if (!attachment.name.endsWith('.json')) return interaction.reply({ content: "❌ Chỉ nhận file `.json`.", ephemeral: true });
@@ -473,13 +503,33 @@ client.on(Events.InteractionCreate, async interaction => {
                 res.on('end', () => {
                     try {
                         const backup = JSON.parse(data);
-                        db.run('DELETE FROM users'); db.run('DELETE FROM history'); db.run('DELETE FROM weekly_history');
-                        for (const u of backup.users) { db.run(`INSERT INTO users (user_id, is_on_duty, start_time, total_time, total_days, is_on_leave, leave_date, schedule_start, schedule_end, has_warned_schedule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [u.user_id, u.is_on_duty, u.start_time, u.total_time, u.total_days, u.is_on_leave, u.leave_date, u.schedule_start, u.schedule_end, u.has_warned_schedule]); }
-                        for (const h of backup.history) db.run(`INSERT INTO history (user_id, date) VALUES (?, ?)`, [h.user_id, h.date]);
+                        
+                        // 1. Khôi phục Config
+                        if (backup.config) {
+                            config = backup.config;
+                            saveConfig();
+                        }
+
+                        // 2. Khôi phục Database
+                        db.run('DELETE FROM users'); db.run('DELETE FROM history'); db.run('DELETE FROM weekly_history'); db.run('DELETE FROM blacklist');
+                        if (backup.users) { for (const u of backup.users) { db.run(`INSERT INTO users (user_id, is_on_duty, start_time, total_time, total_days, is_on_leave, leave_date, schedule_start, schedule_end, has_warned_schedule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [u.user_id, u.is_on_duty, u.start_time, u.total_time, u.total_days, u.is_on_leave, u.leave_date, u.schedule_start, u.schedule_end, u.has_warned_schedule]); } }
+                        if (backup.history) { for (const h of backup.history) db.run(`INSERT INTO history (user_id, date) VALUES (?, ?)`, [h.user_id, h.date]); }
                         if (backup.week) { for (const w of backup.week) db.run(`INSERT INTO weekly_history (user_id, week_id, week_time) VALUES (?, ?, ?)`, [w.user_id, w.week_id, w.week_time]); }
-                        saveDatabase(); if (config.boardChannelId) updateDutyBoard(client.channels.cache.get(config.boardChannelId));
-                        interaction.editReply(`✅ **NHẬP DỮ LIỆU THÀNH CÔNG!**`);
-                    } catch (e) { interaction.editReply("❌ Lỗi định dạng file JSON."); }
+                        if (backup.blacklist) { for (const b of backup.blacklist) db.run(`INSERT INTO blacklist (user_id, reason, banned_by, date) VALUES (?, ?, ?, ?)`, [b.user_id, b.reason, b.banned_by, b.date]); }
+                        
+                        saveDatabase(); 
+                        
+                        // Cập nhật lại bảng nếu có config
+                        if (config.boardChannelId) {
+                            const bChannel = client.channels.cache.get(config.boardChannelId);
+                            if (bChannel) updateDutyBoard(bChannel);
+                        }
+
+                        interaction.editReply(`✅ **NHẬP DỮ LIỆU VÀ CẤU HÌNH THÀNH CÔNG!**`);
+                    } catch (e) { 
+                        console.error(e);
+                        interaction.editReply("❌ Lỗi định dạng file JSON."); 
+                    }
                 });
             }).on("error", () => interaction.editReply("❌ Lỗi tải file."));
             return;
@@ -522,6 +572,42 @@ client.on(Events.InteractionCreate, async interaction => {
             } catch (e) {
                 return interaction.reply({ content: `❌ Không thể gửi tin nhắn tới kênh này (Có thể bot thiếu quyền).`, ephemeral: true });
             }
+        }
+
+        if (commandName === 'blacklist') {
+            const targetUser = options.getUser('user');
+            const reason = options.getString('reason');
+            const targetChannel = options.getChannel('channel') || (config.warningChannelId ? client.channels.cache.get(config.warningChannelId) : client.channels.cache.get(config.boardChannelId));
+
+            if (!targetChannel) {
+                return interaction.reply({ content: "❌ Không tìm thấy kênh thông báo. Hãy setup kênh Cảnh báo trước!", ephemeral: true });
+            }
+
+            const now = new Date();
+            const dateStr = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+            db.run('INSERT OR REPLACE INTO blacklist (user_id, reason, banned_by, date) VALUES (?, ?, ?, ?)', [targetUser.id, reason, "Chief Of Police", dateStr]);
+            saveDatabase();
+
+            const blacklistEmbed = new EmbedBuilder()
+                .setTitle('🚫 THÔNG BÁO BLACKLIST (DANH SÁCH ĐEN)')
+                .setDescription(`**Đối tượng:** <@${targetUser.id}>\n**Lý do:** ${reason}\n**Người xử lý:** Chief Of Police\n**Thời gian:** ${dateStr}`)
+                .setColor(0xFF0000) 
+                .setThumbnail(targetUser.displayAvatarURL())
+                .setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' })
+                .setTimestamp();
+
+            await targetChannel.send({ embeds: [blacklistEmbed] });
+
+            try {
+                const dmEmbed = new EmbedBuilder()
+                    .setTitle('🚫 BẠN ĐÃ BỊ ĐƯA VÀO DANH SÁCH ĐEN')
+                    .setDescription(`Bạn đã bị **Chief Of Police** đưa vào danh sách đen.\n**Lý do:** ${reason}`)
+                    .setColor(0xFF0000)
+                    .setTimestamp();
+                await targetUser.send({ embeds: [dmEmbed] });
+            } catch (e) {}
+
+            return interaction.reply({ content: `✅ Đã đưa <@${targetUser.id}> vào danh sách đen và thông báo tới <#${targetChannel.id}>.`, ephemeral: true });
         }
     }
 
@@ -577,7 +663,11 @@ client.on(Events.InteractionCreate, async interaction => {
         }
     }
 
-    if (interaction.customId === 'onduty_btn' || interaction.customId === 'offduty_btn') {
+    if (interaction.customId === 'onduty_btn' || interaction.customId === 'offduty_btn' || interaction.customId === 'leave_btn') {
+        if (isBlacklisted(interaction.user.id)) {
+            return interaction.reply({ content: "🚫 Bạn đang nằm trong danh sách đen (Blacklist) của Server. Không thể thực hiện hành động này!", ephemeral: true });
+        }
+        
         if (REQUIRED_ROLE_ID && REQUIRED_ROLE_ID !== 'ĐIỀN_ID_ROLE_VÀO_ĐÂY') {
             if (!interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
                 return interaction.reply({ 
@@ -639,7 +729,6 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// LỆNH TEXT (!setup, !bxh, !stats)
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot || !isDbReady) return;
 
