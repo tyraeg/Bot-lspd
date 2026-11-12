@@ -16,7 +16,7 @@ const ADMIN_ID = '1498554147304247296';
 // ==========================================
 // ID ROLE BẮT BUỘC (Để trống nếu không cần)
 // ==========================================
-const REQUIRED_ROLE_ID = 'ĐIỀN_ID_ROLE_VÀO_ĐÂY'; 
+const REQUIRED_ROLE_ID = '1568699055561904198'; 
 // ==========================================
 
 let config = { dutyChannelId: null, warningChannelId: null, leaveChannelId: null, boardChannelId: null };
