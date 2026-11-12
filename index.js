@@ -470,30 +470,37 @@ async function generateProfileImage(targetUser, member) {
     return canvas.toBuffer('image/png');
 }
 
-// 5. Vẽ Bảng Lịch Trực Tất Cả Mọi Người (MỚI)
+// 5. Vẽ Bảng Lịch Trực Tất Cả Mọi Người (Đã Fix Lỗi Bị Cắt Chữ)
 async function generateAllSchedulesImage(guild) {
     const stmt = db.prepare('SELECT * FROM users WHERE schedule_start IS NOT NULL'); 
     const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
     
     if (users.length === 0) return null;
 
-    const rowHeight = 60, headerHeight = 100, padding = 20, width = 800;
+    const rowHeight = 60, headerHeight = 150, padding = 20, width = 850;
     const height = headerHeight + (users.length * rowHeight) + padding;
     
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
+    // Nền chính
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
-    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 85);
-    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 30px sans-serif'; ctx.fillText('LỊCH TRỰC TOÀN BỘ NHÂN SỰ', padding, 45);
-    ctx.font = '14px sans-serif'; ctx.fillStyle = '#b5bac1'; ctx.fillText(`Cập nhật: ${getVNTime()}`, padding, 70);
+    
+    // Thanh Header
+    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 90);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 28px sans-serif'; 
+    ctx.fillText('LỊCH TRỰC TOÀN BỘ NHÂN SỰ', padding, 45);
+    ctx.font = '16px sans-serif'; ctx.fillStyle = '#b5bac1'; 
+    ctx.fillText(`Cập nhật: ${getVNTime()}`, padding, 75);
 
-    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 85, width, 30);
-    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 16px sans-serif';
-    ctx.fillText('TÊN NHÂN VIÊN', 80, 105); 
-    ctx.fillText('GIỜ BẮT ĐẦU', 350, 105); 
-    ctx.fillText('GIỜ KẾT THÚC', 500, 105);
-    ctx.fillText('LẶP LẠI', 680, 105);
+    // Thanh Tiêu Đề Cột (Cách xuống 1 chút để không đè chữ)
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 90, width, 60);
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 18px sans-serif';
+    
+    ctx.fillText('TÊN NHÂN VIÊN', 30, 125); 
+    ctx.fillText('GIỜ BẮT ĐẦU', 350, 125); 
+    ctx.fillText('GIỜ KẾT THÚC', 520, 125);
+    ctx.fillText('TRẠNG THÁI', 700, 125);
 
     let y = headerHeight;
     for (let i = 0; i < users.length; i++) {
@@ -501,19 +508,28 @@ async function generateAllSchedulesImage(guild) {
         const member = await guild.members.fetch(u.user_id).catch(() => null);
         const name = member ? member.displayName : "Unknown";
         
-        if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
+        // Nền xen kẽ
+        if (i % 2 === 0) { 
+            ctx.fillStyle = '#232428'; 
+            ctx.fillRect(0, y, width, rowHeight); 
+        }
 
-        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px sans-serif'; 
-        ctx.fillText(name.substring(0, 18), 80, y + 38);
+        // Tên
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; 
+        ctx.fillText(name.substring(0, 22), 30, y + 38);
 
-        ctx.fillStyle = '#00BFFF'; ctx.font = '18px sans-serif'; 
+        // Giờ bắt đầu (Xanh dương)
+        ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 20px sans-serif'; 
         ctx.fillText(u.schedule_start, 350, y + 38);
 
-        ctx.fillStyle = '#FFA500'; ctx.font = '18px sans-serif'; 
-        ctx.fillText(u.schedule_end, 500, y + 38);
+        // Giờ kết thúc (Cam)
+        ctx.fillStyle = '#FFA500'; ctx.font = 'bold 20px sans-serif'; 
+        ctx.fillText(u.schedule_end, 520, y + 38);
 
-        ctx.fillStyle = u.repeat_daily === 1 ? '#57f287' : '#ed4245'; ctx.font = '16px sans-serif'; 
-        ctx.fillText(u.repeat_daily === 1 ? 'Hàng ngày' : 'Hôm nay', 680, y + 38);
+        // Trạng thái lặp (Xanh lá nếu hàng ngày, Đỏ nếu hôm nay)
+        ctx.fillStyle = u.repeat_daily === 1 ? '#57f287' : '#ed4245'; 
+        ctx.font = 'bold 18px sans-serif'; 
+        ctx.fillText(u.repeat_daily === 1 ? 'Hàng ngày' : 'Hôm nay', 700, y + 38);
 
         y += rowHeight;
     }
