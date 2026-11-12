@@ -148,6 +148,8 @@ const commands = [
         .addStringOption(opt => opt.setName('start').setDescription('Giờ bắt đầu (VD: 14:00)').setRequired(true))
         .addStringOption(opt => opt.setName('end').setDescription('Giờ kết thúc (VD: 15:30)').setRequired(true))
         .addBooleanOption(opt => opt.setName('lap').setDescription('Lặp lại hàng ngày? (True = Có, False = Chỉ hôm nay)').setRequired(true)),
+    new SlashCommandBuilder().setName('xemca').setDescription('Xem lịch trực của một nhân viên')
+        .addUserOption(opt => opt.setName('user').setDescription('Chọn người muốn xem').setRequired(true)),
     new SlashCommandBuilder().setName('setupduty').setDescription('Đặt kênh Log On/Off'),
     new SlashCommandBuilder().setName('setupwarning').setDescription('Đặt kênh Cảnh báo'),
     new SlashCommandBuilder().setName('setupleave').setDescription('Đặt kênh Nghỉ phép'),
@@ -191,7 +193,7 @@ client.once(Events.ClientReady, async () => {
     
     client.user.setPresence({
         status: 'online',
-        activities: [{ name: 'LSPD - GtaNetWork', type: ActivityType.Watching }]
+        activities: [{ name: 'LSPD - GTANetWork', type: ActivityType.Watching }]
     });
 
     loadConfig(); initDatabase();
@@ -215,7 +217,7 @@ async function generateBoardImage(guild) {
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 85);
-    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('Danh Sách Nhân Sự LSPD GtaNetWork', padding, 50);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('Danh Sách Nhân Sự LSPD GTANetWork', padding, 50);
     ctx.font = '16px sans-serif'; ctx.fillStyle = '#b5bac1'; ctx.fillText(`Cập nhật: ${getVNTime()}`, padding, 75);
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 85, width, 45);
@@ -270,7 +272,7 @@ async function generateBXHImage(guild) {
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 100);
-    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('Bảng Xếp Hạng Tổng LSPD - GtaNetWork', padding, 50);
+    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('Bảng Xếp Hạng Tổng LSPD - GTANetWork', padding, 50);
     ctx.fillStyle = '#b5bac1'; ctx.font = '16px sans-serif'; ctx.fillText(`Tổng số nhân sự từng Online: ${totalOnline} người.`, padding, 80);
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 100, width, 50);
@@ -333,7 +335,7 @@ async function generateTimeBXHImage(guild, type = 'week') {
     
     if (users.length === 0) return null;
 
-    const titleText = type === 'week' ? 'BẢNG XẾP HẠNG TUẦN NÀY' : 'BẢNG XẾP HẠNG THÁNG NÀY';
+    const titleText = type === 'week' ? 'Bảng Xếp Hạng LSPD Tuần Này' : 'Bảng Xếp Hạng LSPD Tháng Này';
     const rowHeight = 70, headerHeight = 150, padding = 20, width = 850;
     const height = headerHeight + (users.length * rowHeight) + padding;
     
@@ -416,7 +418,7 @@ async function generateProfileImage(targetUser, member) {
 
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 80);
-    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 28px sans-serif'; ctx.fillText('HỒ SƠ NHÂN SỰ LSPD', padding, 50);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 28px sans-serif'; ctx.fillText('Hồ Sơ Sĩ Quan LSPD', padding, 50);
     
     try {
         const avatarURL = targetUser.displayAvatarURL({ extension: 'png', size: 256 });
@@ -460,8 +462,8 @@ async function generateProfileImage(targetUser, member) {
     const timeWeek = u.week_time + (u.is_on_duty ? (Date.now() - u.start_time) : 0);
     const timeMonth = u.month_time + (u.is_on_duty ? (Date.now() - u.start_time) : 0);
 
-    ctx.fillText(`Tổng giờ trực: ${formatTime(timeTotal)}`, padding, 400);
-    ctx.fillText(`Ngày công: ${u.total_days} ngày`, 400, 400);
+    ctx.fillText(`Tổng Thời Gian Trực: ${formatTime(timeTotal)}`, padding, 400);
+    ctx.fillText(`Ngày Làm: ${u.total_days} ngày`, 400, 400);
 
     ctx.fillStyle = '#b5bac1'; ctx.font = '18px sans-serif';
     ctx.fillText(`Tuần này: ${formatTime(timeWeek)}  |  Tháng này: ${formatTime(timeMonth)}`, padding, 435);
@@ -502,7 +504,7 @@ async function updateDutyBoard(channel) {
 
         const now = Date.now();
         const diffMinutes = Math.floor((now - lastBoardUpdateTime) / 60000);
-        let timeText = diffMinutes < 1 ? `**Bảng chấm công vừa được cập nhật: Vừa xong**` : `**Bảng chấm công vừa được cập nhật: ${diffMinutes} phút**`;
+        let timeText = diffMinutes < 1 ? `**Danh Sách Nhân Sự LSPD ON|OFF DUTY Cập Nhật: Vừa Xong**` : `**Danh Sách Nhân Sự LSPD ON|OFF DUTY Cập Nhật: ${diffMinutes} Phút Trước**`;
         lastBoardUpdateTime = now;
 
         if (buffer) {
@@ -518,7 +520,7 @@ async function updateDutyBoard(channel) {
                 desc += `${m.displayName.padEnd(18).substring(0, 18)} ${st} ${tm}\n`;
             }
             desc += "```";
-            const embed = new EmbedBuilder().setTitle("Danh Sách LSPD GtaNetWork").setDescription(desc).setColor(0x2b2d31);
+            const embed = new EmbedBuilder().setTitle("Danh Sách LSPD GTANetWork").setDescription(desc).setColor(0x2b2d31);
             await channel.send({ content: timeText, embeds: [embed], components: [row] });
         }
     } catch (e) { console.error(e); }
@@ -532,7 +534,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const isServerAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 
         if (!isBotAdmin && !isServerAdmin) {
-            return interaction.reply({ content: "❌ Chỉ Admin Bot hoặc Admin Server mới có quyền sử dụng lệnh này!", ephemeral: true });
+            return interaction.reply({ content: "❌ Chỉ Cấp Cao mới có quyền sử dụng lệnh này!", ephemeral: true });
         }
 
         const { commandName, options, channel, guild } = interaction;
@@ -551,6 +553,41 @@ client.on(Events.InteractionCreate, async interaction => {
             
             const repeatStr = isRepeat ? "**Hàng ngày**" : "**Chỉ hôm nay**";
             return interaction.reply({ content: `✅ Đã set lịch cho <@${targetUser.id}>: Từ **${startTime}** đến **${endTime}** (${repeatStr}).` });
+        }
+
+        if (commandName === 'xemca') {
+            const targetUser = options.getUser('user');
+            const user = getOrCreateUser(targetUser.id);
+            
+            if (!user.schedule_start || !user.schedule_end) {
+                return interaction.reply({ content: `📅 <@${targetUser.id}> hiện chưa có lịch trực nào.`, ephemeral: true });
+            }
+
+            const isRepeat = user.repeat_daily === 1;
+            const now = new Date();
+            const currentMinutes = now.getHours() * 60 + now.getMinutes();
+            const startMins = timeToMinutes(user.schedule_start);
+            const endMins = timeToMinutes(user.schedule_end);
+
+            let statusStr = "Chưa tới giờ";
+            let color = 0xFFFF00; // Vàng
+            if (currentMinutes >= startMins && currentMinutes <= endMins) {
+                statusStr = "Đang trong ca trực";
+                color = 0x00FF00; // Xanh lá
+            } else if (currentMinutes > endMins) {
+                statusStr = "Đã hết ca";
+                color = 0xFF0000; // Đỏ
+            }
+
+            const embed = new EmbedBuilder()
+                .setTitle('📅 Lịch Trực LSPD - GTANetWork')
+                .setDescription(`**Nhân viên:** <@${targetUser.id}>\n**Giờ bắt đầu:** ${user.schedule_start}\n**Giờ kết thúc:** ${user.schedule_end}\n**Lặp lại:** ${isRepeat ? "Hàng ngày" : "Chỉ hôm nay"}\n**Trạng thái ca:** ${statusStr}`)
+                .setColor(color)
+                .setThumbnail(targetUser.displayAvatarURL())
+                .setFooter({ text: 'Hệ Thống Quản Lý LSPD • GTANetWork' })
+                .setTimestamp();
+
+            return interaction.reply({ embeds: [embed] });
         }
 
         if (commandName === 'setupduty') { config.dutyChannelId = channel.id; saveConfig(); return interaction.reply(`✅ Đã đặt kênh Log On/Off.`); }
@@ -740,34 +777,21 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.update({ content: `✅ **${interaction.user.username}** đã duyệt đơn xin nghỉ cho <@${targetId}>.`, embeds: [], components: [] });
     }
 
+    // ĐÃ SỬA: TỪ CHỐI TRỰC TIẾP, KHÔNG CẦN FORM
     if (interaction.customId.startsWith('deny_leave_')) {
         if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) return interaction.reply({ content: "❌ Chỉ Admin Server mới có quyền từ chối đơn xin nghỉ!", ephemeral: true });
 
         const targetId = interaction.customId.split('_')[2];
-        const modal = new ModalBuilder().setCustomId(`deny_leave_modal_${targetId}`).setTitle('Từ chối đơn xin nghỉ phép');
-        const reasonInput = new TextInputBuilder().setCustomId('deny_reason').setLabel('Nhập lý do từ chối').setStyle(TextInputStyle.Paragraph).setPlaceholder('VD: Server đang thiếu người, không thể nghỉ lúc này...').setRequired(true);
-        modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
-        await interaction.showModal(modal);
-        return;
-    }
-
-    // XỬ LÝ KHI ADMIN GỬI FORM LÝ DO TỪ CHỐI
-    if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('deny_leave_modal_')) {
-        // BẮT BUỘC: Phải defer ngay lập tức để tránh lỗi "Đã xảy ra lỗi" do quá 3 giây
-        await interaction.deferReply({ ephemeral: true });
-
-        const targetId = interaction.customId.split('_')[3];
-        const reason = interaction.fields.getTextInputValue('deny_reason');
         const now = new Date();
         const dateStr = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
 
         try { 
             const u = await client.users.fetch(targetId); 
-            const dmEmbed = new EmbedBuilder().setTitle('❌ ĐƠN XIN NGHỈ BỊ TỪ CHỐI').setDescription(`**Chào ${u.username},**\n\nRất tiếc, đơn xin nghỉ phép của bạn đã bị **Chief Of Police** từ chối.\n\n**Thời gian xử lý:** ${dateStr}\n**Lý do:** ${reason}\n\n*Vui lòng tiếp tục công việc bình thường.*`).setColor(0xFF0000).setThumbnail(u.displayAvatarURL()).setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' }).setTimestamp();
+            const dmEmbed = new EmbedBuilder().setTitle('❌ ĐƠN XIN NGHỈ BỊ TỪ CHỐI').setDescription(`**Chào ${u.username},**\n\nRất tiếc, đơn xin nghỉ phép của bạn đã bị **Chief Of Police** từ chối.\n\n**Thời gian xử lý:** ${dateStr}\n\n*Vui lòng tiếp tục công việc bình thường.*`).setColor(0xFF0000).setThumbnail(u.displayAvatarURL()).setFooter({ text: 'Hệ Thống Quản Lý LSPD • GtaNetWork' }).setTimestamp();
             await u.send({ embeds: [dmEmbed] }); 
         } catch (e) { console.log("Không thể gửi DM."); }
 
-        return interaction.editReply({ content: `❌ **${interaction.user.username}** đã từ chối đơn xin nghỉ của <@${targetId}>.\n**Lý do:** ${reason}`, embeds: [], components: [] });
+        return interaction.update({ content: `❌ **${interaction.user.username}** đã từ chối đơn xin nghỉ của <@${targetId}>.`, embeds: [], components: [] });
     }
 
     if (interaction.customId === 'onduty_btn' || interaction.customId === 'offduty_btn' || interaction.customId === 'leave_btn') {
@@ -785,9 +809,9 @@ client.on(Events.InteractionCreate, async interaction => {
     const currentMonth = getMonthId();
 
     if (interaction.customId === 'onduty_btn') {
-        if (user.is_on_leave === 1) return interaction.reply({ content: "❌ Đang nghỉ phép!", ephemeral: true });
-        if (user.is_on_duty) return interaction.reply({ content: "Bạn đã On Duty rồi!", ephemeral: true });
-        if (!voiceChannel) return interaction.reply({ content: "Vào Voice Channel trước đã!", ephemeral: true });
+        if (user.is_on_leave === 1) return interaction.reply({ content: "Bạn Đang nghỉ phép!", ephemeral: true });
+        if (user.is_on_duty) return interaction.reply({ content: "Bạn Hiện Đang Onuty!", ephemeral: true });
+        if (!voiceChannel) return interaction.reply({ content: "Vào Voice Trước Khi Bấm Onduty!", ephemeral: true });
         
         checkAndAddDay(user.user_id);
         db.run('UPDATE users SET is_on_duty = 1, start_time = ?, has_warned_schedule = 0 WHERE user_id = ?', [Date.now(), user.user_id]); 
