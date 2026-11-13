@@ -54,7 +54,7 @@ async function initDatabase() {
         try { db.run('ALTER TABLE users ADD COLUMN has_warned_schedule INTEGER DEFAULT 0'); } catch (e) {}
         try { db.run('ALTER TABLE users ADD COLUMN unit TEXT DEFAULT "Chưa cập nhật"'); } catch (e) {}
         try { db.run('ALTER TABLE users ADD COLUMN repeat_daily INTEGER DEFAULT 0'); } catch (e) {}
-        try { db.run('ALTER TABLE users ADD COLUMN shift_name TEXT DEFAULT NULL'); } catch (e) {} // Thêm cột lưu tên Ca
+        try { db.run('ALTER TABLE users ADD COLUMN shift_name TEXT DEFAULT NULL'); } catch (e) {}
         
         db.run(`CREATE TABLE IF NOT EXISTS history (user_id TEXT, date TEXT, PRIMARY KEY (user_id, date))`);
         
@@ -144,7 +144,6 @@ const getVNTime = () => new Date().toLocaleString("en-US", { timeZone: "Asia/Ho_
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMembers, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages] });
 
 const commands = [
-    // LỆNH SET LỊCH TỰ NHẬP GIỜ VÀ CHỌN CA
     new SlashCommandBuilder().setName('setlich').setDescription('Cài đặt lịch trực')
         .addUserOption(opt => opt.setName('user').setDescription('Chọn nhân viên').setRequired(true))
         .addStringOption(opt => opt.setName('ca').setDescription('Chọn tên Ca (VD: Sáng, Trưa, Chiều, Tối)').setRequired(true))
@@ -480,7 +479,7 @@ async function generateAllSchedulesImage(guild) {
     
     if (users.length === 0) return null;
 
-    const rowHeight = 60, headerHeight = 150, padding = 20, width = 900; // Tăng width để chứa thêm cột Ca
+    const rowHeight = 60, headerHeight = 150, padding = 20, width = 900;
     const height = headerHeight + (users.length * rowHeight) + padding;
     
     const canvas = createCanvas(width, height);
@@ -513,7 +512,7 @@ async function generateAllSchedulesImage(guild) {
         ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px sans-serif'; 
         ctx.fillText(name.substring(0, 20), 30, y + 38);
 
-        ctx.fillStyle = '#FFD700'; ctx.font = 'bold 18px sans-serif'; // Màu vàng cho tên ca
+        ctx.fillStyle = '#FFD700'; ctx.font = 'bold 18px sans-serif'; 
         ctx.fillText(u.shift_name || 'Tùy chỉnh', 320, y + 38);
 
         ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 18px sans-serif'; 
@@ -526,6 +525,87 @@ async function generateAllSchedulesImage(guild) {
         ctx.font = 'bold 18px sans-serif'; 
         ctx.fillText(u.repeat_daily === 1 ? 'Hàng ngày' : 'Hôm nay', 760, y + 38);
 
+        y += rowHeight;
+    }
+    return canvas.toBuffer('image/png');
+}
+
+// 6. Vẽ Bảng Thống Kê (Stats) - ĐÃ KHÔI PHỤC
+async function generateStatsImage(guild) {
+    const currentWeek = getWeekId();
+    const query = `
+        SELECT u.*, COALESCE(w.week_time, 0) as week_time 
+        FROM users u 
+        LEFT JOIN weekly_history w ON u.user_id = w.user_id AND w.week_id = ?
+        ORDER BY u.total_time DESC
+    `;
+    const stmt = db.prepare(query);
+    stmt.bind([currentWeek]);
+    const users = []; 
+    while (stmt.step()) users.push(stmt.getAsObject()); 
+    stmt.free();
+    
+    const activeUsers = users.filter(u => u.total_time > 0 || u.is_on_duty === 1 || u.week_time > 0);
+    if (activeUsers.length === 0) return null;
+
+    let tM = 0, tD = 0, tT = 0, oC = 0;
+    for (const u of activeUsers) {
+        tM++; tD += u.total_days;
+        if (u.is_on_duty) { oC++; tT += (u.total_time + (Date.now() - u.start_time)); } 
+        else { tT += u.total_time; }
+    }
+
+    const rowHeight = 65, headerHeight = 280, padding = 20, width = 850;
+    const height = headerHeight + (activeUsers.length * rowHeight) + padding;
+    
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 120);
+    ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('THỐNG KÊ LSPD GtaNetWork', padding, 55);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; 
+    ctx.fillText(`Tổng nhân sự: ${tM}   |   Đang Online: ${oC}`, padding, 90);
+    
+    ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 130, width, 100);
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('Tổng ngày trực:', padding, 165); 
+    ctx.fillStyle = '#dbdee1'; ctx.fillText(`${tD} ngày`, 250, 165);
+    
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 20px sans-serif'; 
+    ctx.fillText('Tổng thời gian:', padding, 200); 
+    ctx.fillStyle = '#dbdee1'; ctx.fillText(`${formatTime(tT)}`, 250, 200);
+
+    ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 230, width, 50);
+    ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 18px sans-serif';
+    ctx.fillText('TÊN NHÂN VIÊN', 80, 262);
+    ctx.fillText('TRẠNG THÁI', 380, 262);
+    ctx.fillText('TUẦN NÀY', 530, 262);
+    ctx.fillText('TỔNG CỘNG', 680, 262);
+
+    let y = headerHeight;
+    for (let i = 0; i < activeUsers.length; i++) {
+        let u = checkLeaveStatus(activeUsers[i]);
+        const member = await guild.members.fetch(u.user_id).catch(() => null);
+        const name = member ? member.displayName : "Unknown";
+        
+        if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
+
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(name.substring(0, 18), 80, y + 40);
+
+        let statusText = "OFFLINE", statusColor = "#ed4245";
+        if (u.is_on_leave) { statusText = "ON LEAVE"; statusColor = "#fee75c"; }
+        else if (u.is_on_duty) { statusText = "ON DUTY"; statusColor = "#57f287"; }
+        ctx.fillStyle = statusColor; ctx.font = 'bold 16px sans-serif'; ctx.fillText(statusText, 380, y + 40);
+
+        let weekTime = u.week_time;
+        if (u.is_on_duty) weekTime += (Date.now() - u.start_time);
+        ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(formatTime(weekTime), 530, y + 40);
+
+        let totalTime = u.total_time; 
+        if (u.is_on_duty) totalTime += (Date.now() - u.start_time);
+        ctx.fillStyle = '#dbdee1'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(formatTime(totalTime), 680, y + 40);
+        
         y += rowHeight;
     }
     return canvas.toBuffer('image/png');
@@ -599,7 +679,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const { commandName, options, channel, guild } = interaction;
 
-        // LỆNH SET LỊCH MỚI (TỰ NHẬP GIỜ VÀ CHỌN TÊN CA)
         if (commandName === 'setlich') {
             const targetUser = options.getUser('user'); 
             const shiftName = options.getString('ca');
@@ -914,6 +993,7 @@ client.on(Events.MessageCreate, async message => {
         } catch (e) { message.reply("Lỗi khi tạo ảnh BXH."); }
     }
 
+    // LỆNH !stats (ĐÃ SỬA LỖI THIẾU HÀM)
     if (message.content === '!stats') {
         try {
             const buffer = await generateStatsImage(message.guild);
