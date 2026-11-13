@@ -39,7 +39,7 @@ async function initDatabase() {
             user_id TEXT PRIMARY KEY, is_on_duty INTEGER DEFAULT 0, start_time INTEGER DEFAULT 0,
             total_time INTEGER DEFAULT 0, total_days INTEGER DEFAULT 0, is_on_leave INTEGER DEFAULT 0,
             leave_date TEXT DEFAULT NULL, schedule_start TEXT DEFAULT NULL, schedule_end TEXT DEFAULT NULL,
-            has_warned_schedule INTEGER DEFAULT 0, unit TEXT DEFAULT 'Chưa cập nhật', repeat_daily INTEGER DEFAULT 0
+            has_warned_schedule INTEGER DEFAULT 0, unit TEXT DEFAULT 'Chưa cập nhật', repeat_daily INTEGER DEFAULT 0, shift_name TEXT DEFAULT NULL
         )`);
         
         db.run(`CREATE TABLE IF NOT EXISTS blacklist (
@@ -54,6 +54,7 @@ async function initDatabase() {
         try { db.run('ALTER TABLE users ADD COLUMN has_warned_schedule INTEGER DEFAULT 0'); } catch (e) {}
         try { db.run('ALTER TABLE users ADD COLUMN unit TEXT DEFAULT "Chưa cập nhật"'); } catch (e) {}
         try { db.run('ALTER TABLE users ADD COLUMN repeat_daily INTEGER DEFAULT 0'); } catch (e) {}
+        try { db.run('ALTER TABLE users ADD COLUMN shift_name TEXT DEFAULT NULL'); } catch (e) {} // Thêm cột lưu tên Ca
         
         db.run(`CREATE TABLE IF NOT EXISTS history (user_id TEXT, date TEXT, PRIMARY KEY (user_id, date))`);
         
@@ -123,10 +124,10 @@ function checkAndAddDay(userId) {
 }
 
 const getOrCreateUser = (userId) => {
-    if (!isDbReady) return { user_id: userId, is_on_duty: 0, start_time: 0, total_time: 0, total_days: 0, is_on_leave: 0, leave_date: null, unit: 'Chưa cập nhật', repeat_daily: 0 };
+    if (!isDbReady) return { user_id: userId, is_on_duty: 0, start_time: 0, total_time: 0, total_days: 0, is_on_leave: 0, leave_date: null, unit: 'Chưa cập nhật', repeat_daily: 0, shift_name: null };
     const stmt = db.prepare('SELECT * FROM users WHERE user_id = ?'); stmt.bind([userId]);
     let user = null; if (stmt.step()) user = stmt.getAsObject(); stmt.free();
-    if (!user) { db.run('INSERT INTO users (user_id) VALUES (?)', [userId]); saveDatabase(); user = { user_id: userId, is_on_duty: 0, start_time: 0, total_time: 0, total_days: 0, is_on_leave: 0, leave_date: null, unit: 'Chưa cập nhật', repeat_daily: 0 }; } else { user = checkLeaveStatus(user); }
+    if (!user) { db.run('INSERT INTO users (user_id) VALUES (?)', [userId]); saveDatabase(); user = { user_id: userId, is_on_duty: 0, start_time: 0, total_time: 0, total_days: 0, is_on_leave: 0, leave_date: null, unit: 'Chưa cập nhật', repeat_daily: 0, shift_name: null }; } else { user = checkLeaveStatus(user); }
     return user;
 };
 const formatTime = (ms) => {
@@ -143,10 +144,12 @@ const getVNTime = () => new Date().toLocaleString("en-US", { timeZone: "Asia/Ho_
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMembers, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages] });
 
 const commands = [
-    new SlashCommandBuilder().setName('setlich').setDescription('Cài đặt lịch trực (Có thể lặp lại)')
+    // LỆNH SET LỊCH TỰ NHẬP GIỜ VÀ CHỌN CA
+    new SlashCommandBuilder().setName('setlich').setDescription('Cài đặt lịch trực')
         .addUserOption(opt => opt.setName('user').setDescription('Chọn nhân viên').setRequired(true))
-        .addStringOption(opt => opt.setName('start').setDescription('Giờ bắt đầu (VD: 14:00)').setRequired(true))
-        .addStringOption(opt => opt.setName('end').setDescription('Giờ kết thúc (VD: 15:30)').setRequired(true))
+        .addStringOption(opt => opt.setName('ca').setDescription('Chọn tên Ca (VD: Sáng, Trưa, Chiều, Tối)').setRequired(true))
+        .addStringOption(opt => opt.setName('start').setDescription('Giờ bắt đầu (VD: 07:30)').setRequired(true))
+        .addStringOption(opt => opt.setName('end').setDescription('Giờ kết thúc (VD: 11:45)').setRequired(true))
         .addBooleanOption(opt => opt.setName('lap').setDescription('Lặp lại hàng ngày? (True = Có, False = Chỉ hôm nay)').setRequired(true)),
     new SlashCommandBuilder().setName('xemca').setDescription('Xem lịch trực của tất cả nhân viên (Dạng ảnh)'),
     new SlashCommandBuilder().setName('setupduty').setDescription('Đặt kênh Log On/Off'),
@@ -470,37 +473,34 @@ async function generateProfileImage(targetUser, member) {
     return canvas.toBuffer('image/png');
 }
 
-// 5. Vẽ Bảng Lịch Trực Tất Cả Mọi Người (Đã Fix Lỗi Bị Cắt Chữ)
+// 5. Vẽ Bảng Lịch Trực Tất Cả Mọi Người
 async function generateAllSchedulesImage(guild) {
     const stmt = db.prepare('SELECT * FROM users WHERE schedule_start IS NOT NULL'); 
     const users = []; while (stmt.step()) users.push(stmt.getAsObject()); stmt.free();
     
     if (users.length === 0) return null;
 
-    const rowHeight = 60, headerHeight = 150, padding = 20, width = 850;
+    const rowHeight = 60, headerHeight = 150, padding = 20, width = 900; // Tăng width để chứa thêm cột Ca
     const height = headerHeight + (users.length * rowHeight) + padding;
     
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    // Nền chính
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 0, width, height);
-    
-    // Thanh Header
     ctx.fillStyle = '#2b2d31'; ctx.fillRect(0, 0, width, 90);
     ctx.fillStyle = '#ffffff'; ctx.font = 'bold 28px sans-serif'; 
     ctx.fillText('LỊCH TRỰC TOÀN BỘ NHÂN SỰ', padding, 45);
     ctx.font = '16px sans-serif'; ctx.fillStyle = '#b5bac1'; 
     ctx.fillText(`Cập nhật: ${getVNTime()}`, padding, 75);
 
-    // Thanh Tiêu Đề Cột (Cách xuống 1 chút để không đè chữ)
     ctx.fillStyle = '#1e1f22'; ctx.fillRect(0, 90, width, 60);
     ctx.fillStyle = '#f2f3f5'; ctx.font = 'bold 18px sans-serif';
     
     ctx.fillText('TÊN NHÂN VIÊN', 30, 125); 
-    ctx.fillText('GIỜ BẮT ĐẦU', 350, 125); 
-    ctx.fillText('GIỜ KẾT THÚC', 520, 125);
-    ctx.fillText('TRẠNG THÁI', 700, 125);
+    ctx.fillText('TÊN CA', 320, 125);
+    ctx.fillText('GIỜ BẮT ĐẦU', 450, 125); 
+    ctx.fillText('GIỜ KẾT THÚC', 600, 125);
+    ctx.fillText('LẶP LẠI', 760, 125);
 
     let y = headerHeight;
     for (let i = 0; i < users.length; i++) {
@@ -508,28 +508,23 @@ async function generateAllSchedulesImage(guild) {
         const member = await guild.members.fetch(u.user_id).catch(() => null);
         const name = member ? member.displayName : "Unknown";
         
-        // Nền xen kẽ
-        if (i % 2 === 0) { 
-            ctx.fillStyle = '#232428'; 
-            ctx.fillRect(0, y, width, rowHeight); 
-        }
+        if (i % 2 === 0) { ctx.fillStyle = '#232428'; ctx.fillRect(0, y, width, rowHeight); }
 
-        // Tên
-        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 20px sans-serif'; 
-        ctx.fillText(name.substring(0, 22), 30, y + 38);
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px sans-serif'; 
+        ctx.fillText(name.substring(0, 20), 30, y + 38);
 
-        // Giờ bắt đầu (Xanh dương)
-        ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 20px sans-serif'; 
-        ctx.fillText(u.schedule_start, 350, y + 38);
+        ctx.fillStyle = '#FFD700'; ctx.font = 'bold 18px sans-serif'; // Màu vàng cho tên ca
+        ctx.fillText(u.shift_name || 'Tùy chỉnh', 320, y + 38);
 
-        // Giờ kết thúc (Cam)
-        ctx.fillStyle = '#FFA500'; ctx.font = 'bold 20px sans-serif'; 
-        ctx.fillText(u.schedule_end, 520, y + 38);
+        ctx.fillStyle = '#00BFFF'; ctx.font = 'bold 18px sans-serif'; 
+        ctx.fillText(u.schedule_start, 450, y + 38);
 
-        // Trạng thái lặp (Xanh lá nếu hàng ngày, Đỏ nếu hôm nay)
+        ctx.fillStyle = '#FFA500'; ctx.font = 'bold 18px sans-serif'; 
+        ctx.fillText(u.schedule_end, 600, y + 38);
+
         ctx.fillStyle = u.repeat_daily === 1 ? '#57f287' : '#ed4245'; 
         ctx.font = 'bold 18px sans-serif'; 
-        ctx.fillText(u.repeat_daily === 1 ? 'Hàng ngày' : 'Hôm nay', 700, y + 38);
+        ctx.fillText(u.repeat_daily === 1 ? 'Hàng ngày' : 'Hôm nay', 760, y + 38);
 
         y += rowHeight;
     }
@@ -604,8 +599,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const { commandName, options, channel, guild } = interaction;
 
+        // LỆNH SET LỊCH MỚI (TỰ NHẬP GIỜ VÀ CHỌN TÊN CA)
         if (commandName === 'setlich') {
             const targetUser = options.getUser('user'); 
+            const shiftName = options.getString('ca');
             const startTime = options.getString('start'); 
             const endTime = options.getString('end');
             const isRepeat = options.getBoolean('lap');
@@ -613,14 +610,13 @@ client.on(Events.InteractionCreate, async interaction => {
             if (!startTime.includes(':') || !endTime.includes(':')) return interaction.reply({ content: "Giờ phải dạng HH:MM!", ephemeral: true });
             getOrCreateUser(targetUser.id);
             
-            db.run('UPDATE users SET schedule_start = ?, schedule_end = ?, repeat_daily = ?, has_warned_schedule = 0 WHERE user_id = ?', [startTime, endTime, isRepeat ? 1 : 0, targetUser.id]); 
+            db.run('UPDATE users SET schedule_start = ?, schedule_end = ?, shift_name = ?, repeat_daily = ?, has_warned_schedule = 0 WHERE user_id = ?', [startTime, endTime, shiftName, isRepeat ? 1 : 0, targetUser.id]); 
             saveDatabase();
             
             const repeatStr = isRepeat ? "**Hàng ngày**" : "**Chỉ hôm nay**";
-            return interaction.reply({ content: `✅ Đã set lịch cho <@${targetUser.id}>: Từ **${startTime}** đến **${endTime}** (${repeatStr}).` });
+            return interaction.reply({ content: `✅ Đã set lịch cho <@${targetUser.id}>: **Ca ${shiftName}** (${startTime} - ${endTime}) (${repeatStr}).` });
         }
 
-        // LỆNH XEM CA MỚI (VẼ ẢNH TOÀN BỘ)
         if (commandName === 'xemca') {
             await interaction.deferReply();
             try {
@@ -679,7 +675,7 @@ client.on(Events.InteractionCreate, async interaction => {
                         const backup = JSON.parse(data);
                         if (backup.config) { config = backup.config; saveConfig(); }
                         db.run('DELETE FROM users'); db.run('DELETE FROM history'); db.run('DELETE FROM weekly_history'); db.run('DELETE FROM monthly_history'); db.run('DELETE FROM blacklist');
-                        if (backup.users) { for (const u of backup.users) { db.run(`INSERT INTO users (user_id, is_on_duty, start_time, total_time, total_days, is_on_leave, leave_date, schedule_start, schedule_end, has_warned_schedule, unit, repeat_daily) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [u.user_id, u.is_on_duty, u.start_time, u.total_time, u.total_days, u.is_on_leave, u.leave_date, u.schedule_start, u.schedule_end, u.has_warned_schedule, u.unit || "Chưa cập nhật", u.repeat_daily || 0]); } }
+                        if (backup.users) { for (const u of backup.users) { db.run(`INSERT INTO users (user_id, is_on_duty, start_time, total_time, total_days, is_on_leave, leave_date, schedule_start, schedule_end, has_warned_schedule, unit, repeat_daily, shift_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [u.user_id, u.is_on_duty, u.start_time, u.total_time, u.total_days, u.is_on_leave, u.leave_date, u.schedule_start, u.schedule_end, u.has_warned_schedule, u.unit || "Chưa cập nhật", u.repeat_daily || 0, u.shift_name || null]); } }
                         if (backup.history) { for (const h of backup.history) db.run(`INSERT INTO history (user_id, date) VALUES (?, ?)`, [h.user_id, h.date]); }
                         if (backup.week) { for (const w of backup.week) db.run(`INSERT INTO weekly_history (user_id, week_id, week_time) VALUES (?, ?, ?)`, [w.user_id, w.week_id, w.week_time]); }
                         if (backup.month) { for (const m of backup.month) db.run(`INSERT INTO monthly_history (user_id, month_id, month_time) VALUES (?, ?, ?)`, [m.user_id, m.month_id, m.month_time]); }
@@ -917,6 +913,15 @@ client.on(Events.MessageCreate, async message => {
             message.reply({ files: [attachment] });
         } catch (e) { message.reply("Lỗi khi tạo ảnh BXH."); }
     }
+
+    if (message.content === '!stats') {
+        try {
+            const buffer = await generateStatsImage(message.guild);
+            if (!buffer) return message.reply("Chưa có dữ liệu thống kê.");
+            const attachment = new AttachmentBuilder(buffer, { name: 'stats.png' });
+            message.reply({ files: [attachment] });
+        } catch (e) { message.reply("Lỗi khi tạo ảnh Thống kê."); }
+    }
 });
 
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
@@ -957,7 +962,7 @@ setInterval(() => {
         u = checkLeaveStatus(u); if (!u.schedule_start || !u.schedule_end) continue;
         const sM = timeToMinutes(u.schedule_start), eM = timeToMinutes(u.schedule_end);
         if (cM >= sM && cM <= eM && u.is_on_duty === 0 && u.has_warned_schedule === 0 && u.is_on_leave === 0) {
-            if (wC) { const warnEmbed = new EmbedBuilder().setTitle('CẢNH BÁO TRỄ CA TRỰC').setDescription(`**Nhân viên:** <@${u.user_id}>\n**Lịch trực:** Từ **${u.schedule_start}** đến **${u.schedule_end}**\n**Lý do:** Đã đến giờ nhưng chưa bấm nút **On Duty**!`).setColor(0xFFA500).setTimestamp(); wC.send({ embeds: [warnEmbed] }); }
+            if (wC) { const warnEmbed = new EmbedBuilder().setTitle('CẢNH BÁO TRỄ CA TRỰC').setDescription(`**Nhân viên:** <@${u.user_id}>\n**Ca trực:** **${u.shift_name || 'Tùy chỉnh'}** (${u.schedule_start} - ${u.schedule_end})\n**Lý do:** Đã đến giờ nhưng chưa bấm nút **On Duty**!`).setColor(0xFFA500).setTimestamp(); wC.send({ embeds: [warnEmbed] }); }
             db.run('UPDATE users SET has_warned_schedule = 1 WHERE user_id = ?', [u.user_id]); saveDatabase();
         }
         if (cM > eM && u.has_warned_schedule === 1) { db.run('UPDATE users SET has_warned_schedule = 0 WHERE user_id = ?', [u.user_id]); saveDatabase(); }
